@@ -1,0 +1,358 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>QtSDLFFmpegVideoPlayerClass</class>
+ <widget class="QMainWindow" name="QtSDLFFmpegVideoPlayerClass">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>594</width>
+    <height>437</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>QtSDLFFmpegVideoPlayer</string>
+  </property>
+  <widget class="QWidget" name="centralWidget">
+   <layout class="QGridLayout" name="gridLayout">
+    <item row="0" column="0">
+     <widget class="QWidget" name="videoRenderWidget" native="true">
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+        <horstretch>0</horstretch>
+        <verstretch>0</verstretch>
+       </sizepolicy>
+      </property>
+     </widget>
+    </item>
+    <item row="2" column="0">
+     <layout class="QHBoxLayout" name="controllerBar">
+      <property name="spacing">
+       <number>6</number>
+      </property>
+      <item>
+       <spacer name="horizontalSpacerLeft">
+        <property name="orientation">
+         <enum>Qt::Orientation::Horizontal</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>40</width>
+          <height>20</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+      <item>
+       <widget class="RoundedIconButton" name="btnPlayPause">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="text">
+         <string/>
+        </property>
+        <property name="icon">
+         <iconset theme="QIcon::ThemeIcon::MediaPlaybackStart"/>
+        </property>
+        <property name="iconSize">
+         <size>
+          <width>32</width>
+          <height>32</height>
+         </size>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="RoundedIconButton" name="btnStop">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="text">
+         <string/>
+        </property>
+        <property name="icon">
+         <iconset theme="QIcon::ThemeIcon::MediaPlaybackStop"/>
+        </property>
+        <property name="iconSize">
+         <size>
+          <width>16</width>
+          <height>16</height>
+         </size>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="RoundedIconButton" name="btnPrevious">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="text">
+         <string/>
+        </property>
+        <property name="icon">
+         <iconset theme="QIcon::ThemeIcon::MediaSkipBackward"/>
+        </property>
+        <property name="iconSize">
+         <size>
+          <width>16</width>
+          <height>16</height>
+         </size>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="RoundedIconButton" name="btnNext">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="text">
+         <string/>
+        </property>
+        <property name="icon">
+         <iconset theme="QIcon::ThemeIcon::MediaSkipForward"/>
+        </property>
+        <property name="iconSize">
+         <size>
+          <width>16</width>
+          <height>16</height>
+         </size>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <spacer name="horizontalSpacerRight">
+        <property name="orientation">
+         <enum>Qt::Orientation::Horizontal</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>40</width>
+          <height>20</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+     </layout>
+    </item>
+    <item row="1" column="0">
+     <widget class="QSlider" name="sliderMediaProgress">
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+        <horstretch>0</horstretch>
+        <verstretch>0</verstretch>
+       </sizepolicy>
+      </property>
+      <property name="tracking">
+       <bool>false</bool>
+      </property>
+      <property name="orientation">
+       <enum>Qt::Orientation::Horizontal</enum>
+      </property>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+  <widget class="QMenuBar" name="mainMenuBar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>594</width>
+     <height>21</height>
+    </rect>
+   </property>
+   <widget class="QMenu" name="mainMenu">
+    <property name="title">
+     <string>文件</string>
+    </property>
+    <addaction name="actionOpenFile"/>
+    <addaction name="separator"/>
+    <addaction name="actionQuit"/>
+   </widget>
+   <addaction name="mainMenu"/>
+  </widget>
+  <widget class="QToolBar" name="mainToolBar">
+   <attribute name="toolBarArea">
+    <enum>TopToolBarArea</enum>
+   </attribute>
+   <attribute name="toolBarBreak">
+    <bool>false</bool>
+   </attribute>
+  </widget>
+  <widget class="QStatusBar" name="statusBar"/>
+  <action name="actionOpenFile">
+   <property name="text">
+    <string>打开</string>
+   </property>
+  </action>
+  <action name="actionQuit">
+   <property name="text">
+    <string>退出</string>
+   </property>
+  </action>
+ </widget>
+ <layoutdefault spacing="6" margin="11"/>
+ <customwidgets>
+  <customwidget>
+   <class>RoundedIconButton</class>
+   <extends>QPushButton</extends>
+   <header>roundediconbutton.h</header>
+  </customwidget>
+ </customwidgets>
+ <resources>
+  <include location="QtSDLFFmpegVideoPlayer.qrc"/>
+ </resources>
+ <connections>
+  <connection>
+   <sender>sliderMediaProgress</sender>
+   <signal>sliderMoved(int)</signal>
+   <receiver>QtSDLFFmpegVideoPlayerClass</receiver>
+   <slot>mediaSliderMoved(int)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>30</x>
+     <y>370</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>27</x>
+     <y>403</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>sliderMediaProgress</sender>
+   <signal>sliderPressed()</signal>
+   <receiver>QtSDLFFmpegVideoPlayerClass</receiver>
+   <slot>mediaSliderPressed()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>47</x>
+     <y>369</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>50</x>
+     <y>408</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>sliderMediaProgress</sender>
+   <signal>sliderReleased()</signal>
+   <receiver>QtSDLFFmpegVideoPlayerClass</receiver>
+   <slot>mediaSliderReleased()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>79</x>
+     <y>370</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>75</x>
+     <y>396</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>sliderMediaProgress</sender>
+   <signal>valueChanged(int)</signal>
+   <receiver>QtSDLFFmpegVideoPlayerClass</receiver>
+   <slot>mediaSliderValueChanged(int)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>103</x>
+     <y>373</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>108</x>
+     <y>387</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnPlayPause</sender>
+   <signal>clicked()</signal>
+   <receiver>QtSDLFFmpegVideoPlayerClass</receiver>
+   <slot>mediaPlayPause()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>246</x>
+     <y>403</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>213</x>
+     <y>410</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnStop</sender>
+   <signal>clicked()</signal>
+   <receiver>QtSDLFFmpegVideoPlayerClass</receiver>
+   <slot>mediaStop()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>279</x>
+     <y>399</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>279</x>
+     <y>409</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnPrevious</sender>
+   <signal>clicked()</signal>
+   <receiver>QtSDLFFmpegVideoPlayerClass</receiver>
+   <slot>mediaPrevious()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>318</x>
+     <y>392</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>316</x>
+     <y>409</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnNext</sender>
+   <signal>clicked()</signal>
+   <receiver>QtSDLFFmpegVideoPlayerClass</receiver>
+   <slot>mediaNext()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>351</x>
+     <y>392</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>351</x>
+     <y>412</y>
+    </hint>
+   </hints>
+  </connection>
+ </connections>
+ <slots>
+  <slot>mediaPlayPause()</slot>
+  <slot>mediaStop()</slot>
+  <slot>mediaPrevious()</slot>
+  <slot>mediaNext()</slot>
+  <slot>mediaSeek()</slot>
+  <slot>mediaSliderMoved(int)</slot>
+  <slot>mediaSliderPressed()</slot>
+  <slot>mediaSliderReleased()</slot>
+  <slot>mediaSliderValueChanged(int)</slot>
+ </slots>
+</ui>

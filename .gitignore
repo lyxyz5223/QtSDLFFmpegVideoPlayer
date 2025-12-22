@@ -361,3 +361,6 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# 忽略 VSCodeCounter 目录（由 VS Code 插件生成的代码统计目录）
+**/.VSCodeCounter
