@@ -110,7 +110,9 @@
   <ItemGroup>
     <ClCompile Include="AudioAdapter.cpp" />
     <ClCompile Include="AudioPlayer.cpp" />
+    <ClCompile Include="EnumDefine.h" />
     <ClCompile Include="MediaPlayer.cpp" />
+    <ClCompile Include="PlayerPredefine.cpp" />
     <ClCompile Include="PortAudioAdapter.h" />
     <ClCompile Include="RoundedIconButton.cpp" />
     <ClCompile Include="SDLApp.cpp" />
@@ -127,6 +129,7 @@
     <ResourceCompile Include="QtSDLFFmpegVideoPlayer.rc" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="AtomicWaitObject.h" />
     <ClInclude Include="AudioAdapter.h" />
     <ClInclude Include="AudioPlayer.h" />
     <ClInclude Include="MediaPlayer.h" />

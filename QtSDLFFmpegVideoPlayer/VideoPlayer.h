@@ -129,9 +129,9 @@ private:
         //    std::unique_lock lockMtxQueueRequestTasks(playbackStateVariables.mtxQueueRequestTasks); // 独占锁
         //    playbackStateVariables.queueRequestTasks.emplace(args); // 构造入队
         //}
-        void pushRequestTaskQueue(RequestTaskType type, std::function<void(std::any userData)> handler, std::any userData, std::vector<ThreadIdentifier> blockTargetThreadIds, RequestTaskProcessCallbacks callbacks) {
+        void pushRequestTaskQueue(RequestTaskType type, std::function<void(MediaRequestHandleEvent* e, std::any userData)> handler, MediaRequestHandleEvent* event, std::any userData, std::vector<ThreadIdentifier> blockTargetThreadIds, RequestTaskProcessCallbacks callbacks) {
             std::unique_lock lockMtxQueueRequestTasks(mtxQueueRequestTasks); // 独占锁
-            queueRequestTasks.emplace(type, handler, userData, blockTargetThreadIds, callbacks); // 构造入队
+            queueRequestTasks.emplace(type, handler, event, userData, blockTargetThreadIds, callbacks); // 构造入队
             // 记得通知处于等待的请求任务处理线程
             cvQueueRequestTasks.notify_all();
         }
@@ -146,18 +146,19 @@ private:
     Logger logger{ "VideoPlayer", loggerSinks };
 
     // 播放器状态
-    Atomic<PlayerState> playerState{ PlayerState::Stopped };
+    AtomicStateMachine<PlayerState> playerState{ PlayerState::Stopped };
     AtomicWaitObject<bool> waitStopped{ false }; // true表示已停止，false表示未停止
     VideoPlaybackStateVariables playbackStateVariables;
 
 public:
+    VideoPlayer() : PlayerInterface(logger) {}
     ~VideoPlayer() {
         stop();
     }
     bool play(const std::string& filePath, VideoPlayOptions options) {
         if (!isStopped())
             return false;
-        if (!playerState.trySet(PlayerState::Preparing))
+        if (!trySetPlayerState(PlayerState::Preparing))
             return false;
         setFilePath(filePath);
         playbackStateVariables.playOptions = options;
@@ -166,10 +167,14 @@ public:
     bool play() override {
         if (!isStopped())
             return false;
-        if (!playerState.trySet(PlayerState::Preparing))
+        PlayerState old = PlayerState::Stopped;
+        if (!trySetPlayerState(PlayerState::Preparing))
             return false;
         if (playbackStateVariables.filePath.empty()) // 打开了文件才能播放
+        {
+            setPlayerState(old);
             return false;
+        }
         return playVideoFile(); // 重新播放
     }
 
@@ -177,15 +182,15 @@ public:
         if (isPaused())
         {
             // 恢复播放
-            playerState.set(PlayerState::Playing);
+            setPlayerState(PlayerState::Playing);
             // 唤醒所有线程
             playbackStateVariables.threadStateManager.wakeUpAll();
         }
     }
     void pause() override {
-        if (playerState == PlayerState::Playing)
+        if (isPlaying())
         {
-            playerState.set(PlayerState::Pausing);
+            setPlayerState(PlayerState::Pausing);
             // 唤醒所有线程
             playbackStateVariables.threadStateManager.wakeUpAll();
         }
@@ -193,7 +198,7 @@ public:
     void notifyStop() override {
         if (playerState != PlayerState::Stopping && !isStopped())
         {
-            playerState.set(PlayerState::Stopping);
+            setPlayerState(PlayerState::Stopping);
             // 唤醒所有线程
             playbackStateVariables.threadStateManager.wakeUpAll();
             // 唤醒请求任务等待，以便处理停止请求，退出处理线程
@@ -214,10 +219,10 @@ public:
         if (!isStopped() && playerState != PlayerState::Stopping)
         {
             // 提交seek任务
-            auto seekHandler = std::bind(&VideoPlayer::requestTaskHandlerSeek, this, std::placeholders::_1);
+            auto seekHandler = std::bind(&VideoPlayer::requestTaskHandlerSeek, this, std::placeholders::_1, std::placeholders::_2);
             // 阻塞三个线程（即所有与读包解包相关的线程）
             auto&& blockThreadIds = { ThreadIdentifier::VideoReadingThread, ThreadIdentifier::VideoDecodingThread, ThreadIdentifier::VideoRenderingThread };
-            playbackStateVariables.pushRequestTaskQueue(RequestTaskType::Seek, seekHandler, SeekData{ pts, streamIndex }, blockThreadIds, callbacks);
+            playbackStateVariables.pushRequestTaskQueue(RequestTaskType::Seek, seekHandler, new MediaSeekEvent{ pts, streamIndex }, SeekData{ pts, streamIndex }, blockThreadIds, callbacks);
         }
     }
     void seek(uint64_t pts, StreamIndexType streamIndex = -1, RequestTaskProcessCallbacks callbacks = RequestTaskProcessCallbacks{}) override {
@@ -264,10 +269,29 @@ public:
         this->playbackStateVariables.playOptions.frameSwitchOptionsCallbackUserData = userData;
     }
 
+protected:
+
 private:
+    void setPlayerState(PlayerState state) {
+        PlayerState oldState = playerState.load();
+        playerState.set(state, oldState);
+        notifyPlaybackStateChangeHandler(state, oldState);
+    }
+    bool trySetPlayerState(PlayerState state) {
+        PlayerState oldState = playerState.load();
+        bool r = playerState.trySet(state, oldState);
+        notifyPlaybackStateChangeHandler(state, oldState);
+        return r;
+    }
+
+    void notifyPlaybackStateChangeHandler(PlayerState newState, PlayerState oldState) {
+        auto e = MediaPlaybackStateChangeEvent{ newState, oldState };
+        event(&e);
+    }
+
     void resetPlayer() {
         playbackStateVariables.reset();
-        playerState.set(PlayerState::Stopped);
+        setPlayerState(PlayerState::Stopped);
     }
 
     bool playVideoFile();
@@ -297,7 +321,7 @@ private:
 
     void requestTaskProcessor();
 
-    void requestTaskHandlerSeek(std::any userData);
+    void requestTaskHandlerSeek(MediaRequestHandleEvent* e, std::any userData);
 
     enum class DeprecatedPixelFormat {
         YUVJ420P = AV_PIX_FMT_YUVJ420P,  ///< planar YUV 4:2:0, 12bpp, full scale (JPEG), deprecated in favor of AV_PIX_FMT_YUV420P and setting color_range
@@ -327,5 +351,7 @@ private:
     AVPixelFormat getSupportedPixelFormat(AVPixelFormat pixFmt, bool& isDeprecated);
 
     SwsContext* checkAndGetCorrectSwsContext(SizeI srcSize, AVPixelFormat srcFmt, SizeI dstSize, AVPixelFormat dstFmt, SwsFlags flags);
+
+
 
 };

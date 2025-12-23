@@ -32,6 +32,7 @@ extern "C"
 #include <Logger.h>
 
 #include "MultiEnumTypeDefine.h"
+#include "AtomicWaitObject.h"
 
 #include <concurrentqueue.h>
 
@@ -60,6 +61,8 @@ public:
     // AVFormatContext智能指针删除器
     static AVFormatContextConstDeleter constDeleterAVFormatContext;
 
+    inline constexpr static auto ThreadSleepMs = SleepForMs;
+    inline constexpr static auto ThreadYield = std::this_thread::yield;
 
 
     typedef long long StreamIndexType;
@@ -95,19 +98,59 @@ public:
     class Atomic : public std::atomic<T> {
     public:
         using std::atomic<T>::atomic;
-        void set(T s) {
+        virtual void set(T s) {
             auto tmp = this->load();
             while (!this->compare_exchange_strong(tmp, s));
         }
-        bool trySet(T s) {
+        virtual void set(T s, T& old) {
+            old = this->load();
+            while (!this->compare_exchange_strong(old, s));
+        }
+        virtual bool trySet(T s) {
             auto tmp = this->load();
             return this->compare_exchange_strong(tmp, s);
         }
+        virtual bool trySet(T s, T& old) {
+            old = this->load();
+            return this->compare_exchange_strong(old, s);
+        }
     };
-
     using AtomicInt = std::atomic<int>;
     using AtomicDouble = std::atomic<double>;
     using AtomicBool = std::atomic<bool>;
+
+    template <typename T>
+    class AtomicStateMachine : public Atomic<T> {
+        Atomic<T> prevValue;
+    public:
+        using Atomic<T>::Atomic;
+        virtual void set(T s) override {
+            auto tmp = this->load();
+            prevValue.set(tmp);
+            while (!this->compare_exchange_strong(tmp, s))
+                prevValue.set(tmp);
+        }
+        virtual void set(T s, T& old) override {
+            old = this->load();
+            while (!this->compare_exchange_strong(old, s))
+                prevValue.set(old);
+        }
+        virtual bool trySet(T s) override {
+            auto tmp = this->load();
+            bool r = this->compare_exchange_strong(tmp, s);
+            prevValue.set(tmp);
+            return r;
+        }
+        virtual bool trySet(T s, T& old) override {
+            old = this->load();
+            bool r = this->compare_exchange_strong(old, s);
+            prevValue.set(old);
+            return r;
+        }
+        virtual T prev() const {
+            return prevValue.load();
+        }
+    };
 
     template <typename T>
     struct Size
@@ -164,7 +207,6 @@ public:
         //Finished = 7,
     };
 
-
     enum class MediaType : char {
         Unknown = -1,
         Video = 0,
@@ -173,27 +215,31 @@ public:
         Subtitle = 3,
         Attachment = 4,
     };
-    // 打开文件的时候会查找流，并调用流选择器，用于选择需要解码的流
-    // 返回true表示选择成功，outStreamIndex为选中的流索引，streamIndicesList为所有可选流索引列表
-    // 如果返回false，则表示未选择任何流
-    using StreamIndexSelector = std::function<bool(StreamIndexType& outStreamIndex, MediaType type, const std::vector<StreamIndexType>& streamIndicesList, const AVFormatContext* fmtCtx, const AVCodecContext* codecCtx)>;
+
+    enum class RequestTaskType : char {
+        None = 0,
+        Seek = 1,
+    };
+    enum class RequestHandleState {
+        BeforeHandle,
+        AfterHandle
+    };
+    enum class ThreadIdentifier {
+        None = 0,
+        VideoReadingThread = 1, // av_read_frame线程
+        VideoDecodingThread, // av_send_packet + av_receive_frame线程
+        VideoRenderingThread, // renderer渲染线程
+        AudioReadingThread, // av_read_frame线程
+        AudioDecodingThread, // av_send_packet + av_receive_frame线程
+        AudioPlayingThread, // audio播放线程
+    };
 
     class MediaEventType {
     public:
         enum MediaEvent : int {
             None = 0,
-            Opened = 1,
-            OpenFailed = 2,
-            Closed = 3,
-            Started = 4,
-            StartFailed = 5,
-            Stopped = 6,
-            Paused = 7,
-            Resumed = 8,
-            Seeking = 9,
-            Seeked = 10,
-            Finished = 11,
-            ErrorOccurred = 12,
+            PlaybackStateChange,
+            RequestHandle,
         };
     private:
         MediaEvent type{ None };
@@ -203,14 +249,12 @@ public:
         MediaEventType(const MediaEventType&& t) noexcept : type(t.type) {}
         ~MediaEventType() = default;
         MediaEvent value() const { return type; }
+        std::string name() const;
         bool isEqual(const MediaEventType& other) const {
             return type == other.type;
         }
         operator MediaEvent() {
             return type;
-        }
-        operator int() {
-            return static_cast<int>(type);
         }
         bool operator==(const MediaEventType& other) const {
             return isEqual(other);
@@ -224,100 +268,95 @@ public:
             return *this;
         }
     };
-    //using MediaUserDataType = std::any;
-    //struct MediaEventInterface {
-    //    virtual MediaEventType type() const = 0;
-    //    virtual void setType(MediaEventType t) = 0;
-    //    //virtual MediaUserDataType userData() const = 0;
-    //    //virtual void setUserData(const MediaUserDataType& d) = 0;
-    //};
-    //class MediaEvent : public MediaEventInterface {
-    //protected:
-    //    MediaEventType type{ MediaEventType::None };
-    //public:
-    //    ~MediaEvent() = default;
-    //    MediaEvent() = default;
-    //    MediaEvent(MediaEventType t) : type(t) {}
-    //    virtual MediaEventType type() const override { return type; }
-    //    virtual void setType(MediaEventType t) override { type = t; }
-    //};
-
-    //class MediaSeekEvent : public MediaEvent {
-    //    uint64_t pts{ 0 };
-    //    StreamIndexType idx{ -1 };
-    //public:
-    //    MediaSeekEvent() : MediaEvent(MediaEventType::Seeking) {}
-    //    MediaSeekEvent(uint64_t pts, StreamIndexType streamIndex = -1) : MediaEvent(MediaEventType::Seeking), pts(pts), idx(streamIndex) {}
-    //    void setTimeStamp(uint64_t v) { pts = v; }
-    //    void setStreamIndex(StreamIndexType v) { idx = v; }
-    //    uint64_t timeStamp() const { return pts; }
-    //    StreamIndexType streamIndex() const { return idx; }
-    //};
-
-    // 睡眠
-    //inline constexpr static auto ThreadSleepMs = [](uint64_t duration) {
-    //    SleepFor(std::chrono::milliseconds(duration));
-    //    //Sleep(duration);
-    //    };
-    inline constexpr static auto ThreadSleepMs = SleepForMs;
-    inline constexpr static auto ThreadYield = std::this_thread::yield;
-
-    template<typename T>
-    class AtomicWaitObject {
+    using MediaUserDataType = std::any;
+    class MediaEventDispatcher; // 前置声明
+    class MediaEvent {
+        friend class MediaEventDispatcher;
+        virtual void setType(MediaEventType t) final { this->eventType = t; }
+    protected:
+        MediaEventType eventType{ MediaEventType::None };
     public:
-        AtomicWaitObject(T v) : data(v) {}
-
-        void wait(T desired) const noexcept {
-            // 只要值 != desired 就睡觉，内部用 futex/WaitOnAddress
-            T v = data.load(std::memory_order_acquire);
-            while (v != desired)
-            {
-                std::atomic_wait(&data, v); // 阻塞，直到被 notify
-                v = data.load(std::memory_order_acquire); // memory_order_acquire 保证之后的读操作能看到之前线程的写操作
-            }
-        }
-
-        void notifyOne() noexcept {
-            std::atomic_notify_one(&data); // 唤醒一个等待者
-        }
-        void notifyAll() noexcept {
-            std::atomic_notify_all(&data); // 唤醒全部
-        }
-
-        void set(T v) noexcept {
-            data.store(v, std::memory_order_release); // memory_order_release 保证之前的写操作对其他线程可见
-        }
-
-        T get() const noexcept {
-            return data.load(std::memory_order_acquire); // memory_order_acquire 保证之后的读操作能看到之前线程的写操作
-        }
-
-        void setAndNotifyAll(T v) noexcept {
-            set(v); // 设置新值
-            notifyAll(); // 改完立即通知
-        }
-        void setAndNotifyOne(T v) noexcept {
-            set(v); // 设置新值
-            notifyOne(); // 改完立即通知
-        }
-
+        MediaEvent(MediaEventType t) : eventType(t) {}
+        virtual MediaEventType type() const { return this->eventType; }
+    };
+    //class MediaEventDispatcher {
+    //    PlayerInterface* player{ nullptr };
+    //public:
+    //    MediaEventDispatcher(PlayerInterface* player) : player(player) {}
+    //    //using MediaEventCallback = std::function<void(const MediaEventInterface& event, const MediaUserDataType& userData)>;
+    //    template <typename... Args>
+    //    bool invoke(MediaEventType eventType, Args... args) {
+    //        return true;
+    //    }
+    //    template <typename Arg>
+    //    bool invoke(const MediaEvent& event, Arg arg) {
+    //        return true;
+    //    }
+    //};
+    class MediaPlaybackStateChangeEvent : public MediaEvent {
     private:
-        alignas(64) std::atomic<T> data; // 64字节对齐
+        PlayerState os{ PlayerState::Stopped };
+        PlayerState s{ PlayerState::Stopped };
+    public:
+        MediaPlaybackStateChangeEvent(PlayerState state, PlayerState oldState)
+            : MediaEvent(MediaEventType::PlaybackStateChange), os(oldState), s(state) {
+        }
+        PlayerState state() const { return s; }
+        PlayerState oldState() const { return os; }
+    };
+    class MediaRequestHandleEvent : public MediaEvent {
+    protected:
+        RequestHandleState state{ RequestHandleState::BeforeHandle };
+        RequestTaskType reqType{ RequestTaskType::Seek };
+        bool accepted{ true }; // 默认接受该请求
+    public:
+        MediaRequestHandleEvent(RequestTaskType t)
+            : MediaEvent(MediaEventType::RequestHandle), reqType(t) {
+        }
+        MediaRequestHandleEvent(RequestHandleState s, RequestTaskType t)
+            : MediaEvent(MediaEventType::RequestHandle), state(s), reqType(t) {
+        }
+        MediaRequestHandleEvent(RequestHandleState newState, const MediaRequestHandleEvent& toClone)
+            : MediaEvent(MediaEventType::RequestHandle), state(newState), reqType(toClone.reqType), accepted(toClone.accepted) {
+        }
+        virtual RequestHandleState handleState() const { return state; }
+        virtual RequestTaskType requestType() const { return reqType; }
+        // 接受该请求
+        virtual void accept() { accepted = true; }
+        // 忽略该请求
+        virtual void ignore() { accepted = false; }
+        virtual void setAccepted(bool a) { accepted = a; }
+        virtual bool isAccepted() const { return accepted; }
+        virtual UniquePtrD<MediaRequestHandleEvent> clone() const {
+            return std::make_unique<MediaRequestHandleEvent>(*this);
+        }
+        virtual UniquePtrD<MediaRequestHandleEvent> clone(RequestHandleState newState) const {
+            return std::make_unique<MediaRequestHandleEvent>(newState, *this);
+        }
+    };
+    // MediaSeekEvent 也是 MediaRequestHandleEvent 的特殊情况
+    class MediaSeekEvent : public MediaRequestHandleEvent {
+    protected:
+        uint64_t pts{ 0 };
+        StreamIndexType idx{ -1 };
+    public:
+        MediaSeekEvent(uint64_t pts, StreamIndexType streamIndex = -1)
+            : MediaRequestHandleEvent(RequestTaskType::Seek), pts(pts), idx(streamIndex) {}
+        MediaSeekEvent(RequestHandleState handleState, uint64_t pts, StreamIndexType streamIndex = -1)
+            : MediaRequestHandleEvent(handleState, RequestTaskType::Seek), pts(pts), idx(streamIndex) {}
+        MediaSeekEvent(RequestHandleState newState, const MediaSeekEvent& toClone)
+            : MediaRequestHandleEvent(newState, toClone), pts(toClone.pts), idx(toClone.idx) {}
+        virtual uint64_t timestamp() const { return pts; }
+        virtual StreamIndexType streamIndex() const { return idx; }
+        virtual UniquePtrD<MediaRequestHandleEvent> clone() const override {
+            return std::make_unique<MediaSeekEvent>(*this);
+        }
+        virtual UniquePtrD<MediaRequestHandleEvent> clone(RequestHandleState newState) const override {
+            return std::make_unique<MediaSeekEvent>(newState, *this);
+        }
+
     };
 
-    enum class RequestTaskType {
-        None = 0,
-        Seek = 1,
-    };
-    enum class ThreadIdentifier {
-        None = 0,
-        VideoReadingThread = 1, // av_read_frame线程
-        VideoDecodingThread, // av_send_packet + av_receive_frame线程
-        VideoRenderingThread, // renderer渲染线程
-        AudioReadingThread, // av_read_frame线程
-        AudioDecodingThread, // av_send_packet + av_receive_frame线程
-        AudioPlayingThread, // audio播放线程
-    };
     // 用于处理一些请求任务
     struct RequestTaskItem;
     using RequestTaskProcessCallback = std::function<void(const RequestTaskItem& taskItem)>;
@@ -327,11 +366,19 @@ public:
     };
     struct RequestTaskItem {
         RequestTaskType type{ RequestTaskType::None }; // 任务类型
-        std::function<void(std::any userData)> handler; // 处理函数
+        std::function<void(MediaRequestHandleEvent* e, std::any userData)> handler; // 处理函数
+        MediaRequestHandleEvent* event; // 关联的事件对象指针
         std::any userData; // 用户数据
         std::vector<ThreadIdentifier> blockTargetThreadIds; // 需要暂停等待当前任务处理完成的线程ID列表
         RequestTaskProcessCallbacks callbacks;
     };
+
+    // 打开文件的时候会查找流，并调用流选择器，用于选择需要解码的流
+    // 返回true表示选择成功，outStreamIndex为选中的流索引，streamIndicesList为所有可选流索引列表
+    // 如果返回false，则表示未选择任何流
+    using StreamIndexSelector = std::function<bool(StreamIndexType& outStreamIndex, MediaType type, const std::vector<StreamIndexType>& streamIndicesList, const AVFormatContext* fmtCtx, const AVCodecContext* codecCtx)>;
+
+
 
     class ThreadStateManager {
     public:
@@ -490,10 +537,6 @@ public:
 
 };
 
-inline PlayerTypes::AVCodecContextConstDeleter PlayerTypes::constDeleterAVCodecContext = [](AVCodecContext* ctx) { if (ctx) avcodec_free_context(&ctx); };
-inline PlayerTypes::AVPacketConstDeleter PlayerTypes::constDeleterAVPacket = [](AVPacket* pkt) { if (pkt) av_packet_free(&pkt); };
-inline PlayerTypes::AVFrameConstDeleter PlayerTypes::constDeleterAVFrame = [](AVFrame* frame) { if (frame) av_frame_free(&frame); };
-inline PlayerTypes::AVFormatContextConstDeleter PlayerTypes::constDeleterAVFormatContext = [](AVFormatContext* ctx) { if (ctx) avformat_close_input(&ctx); };
 
 class MediaDecodeUtils : public PlayerTypes
 {
@@ -555,7 +598,7 @@ public:
                 // 读取到文件末尾
                 if (isEof)
                     *isEof = true;
-                logger->info("Reached end of file.");
+                logger->trace("Reached end of file.");
                 return false;
             }
             else
@@ -741,7 +784,13 @@ public:
 
 class PlayerInterface : public PlayerTypes
 {
+private:
+    Logger& logger;
+private:
+    void playbackStateChangeEventHandler(MediaPlaybackStateChangeEvent* e);
+    void requestHandleEventHandler(MediaRequestHandleEvent* e);
 public:
+    PlayerInterface(Logger& logger) : logger(logger) {}
     virtual ~PlayerInterface() = default;
     virtual bool play() = 0;
     virtual void resume() = 0;
@@ -757,44 +806,24 @@ public:
     virtual std::string getFilePath() const = 0;
     virtual void setStreamIndexSelector(const StreamIndexSelector& selector) = 0;
     //virtual void setVolume(double volume) = 0;
-    /*
-        // 方法一
-    virtual void addEventHandler(size_t handlerId, std::function<void(const MediaEventType& eventType, const std::any& eventData)> handler) = 0;
-    virtual void removeEventHandler(size_t handlerId) = 0;
+    
+    // 方法一
+    //virtual void addEventHandler(size_t handlerId, std::function<void(const MediaEventType& eventType, const std::any& eventData)> handler) = 0;
+    //virtual void removeEventHandler(size_t handlerId) = 0;
 
     // 方法二
-    using MediaUserDataType = std::any;
-    struct MediaEventInterface {
-        virtual MediaEventType type() const = 0;
-        virtual void setType(MediaEventType t) = 0;
-        //virtual MediaUserDataType userData() const = 0;
-        //virtual void setUserData(const MediaUserDataType& d) = 0;
-    };
-    class MediaEvent : public MediaEventInterface {
-    protected:
-        MediaEventType type{ MediaEventType::None };
-    public:
-        ~MediaEvent() = default;
-        MediaEvent() = default;
-        MediaEvent(MediaEventType t) : type(t) {}
-        virtual MediaEventType type() const override { return type; }
-        virtual void setType(MediaEventType t) override { type = t; }
-    };
-    class MediaSeekEvent : public MediaEvent {
-        uint64_t pts{ 0 };
-        StreamIndexType idx{ -1 };
-    public:
-        MediaSeekEvent() : MediaEvent(MediaEventType::Seeking) {}
-        MediaSeekEvent(uint64_t pts, StreamIndexType streamIndex = -1) : MediaEvent(MediaEventType::Seeking), pts(pts), idx(streamIndex) {}
-        void setTimeStamp(uint64_t v) { pts = v; }
-        void setStreamIndex(StreamIndexType v) { idx = v; }
-        uint64_t timeStamp() const { return pts; }
-        StreamIndexType streamIndex() const { return idx; }
-    };
-    virtual void startEvent(const MediaEvent* e) = 0;
-    virtual void pauseEvent(const MediaEvent* e) = 0;
-    virtual void resumeEvent(const MediaEvent* e) = 0;
-    virtual void stopEvent(const MediaEvent* e) = 0;
-    virtual void seekEvent(const MediaEvent* e) = 0;
-    */
+protected:
+    virtual bool event(MediaEvent* e);
+    virtual void playbackStateChangeEvent(MediaPlaybackStateChangeEvent* e) {}
+    // 已经开始播放事件
+    virtual void startEvent(MediaPlaybackStateChangeEvent* e) {}
+    // 暂停播放事件
+    virtual void pauseEvent(MediaPlaybackStateChangeEvent* e) {}
+    // 恢复播放事件
+    virtual void resumeEvent(MediaPlaybackStateChangeEvent* e) {}
+    // 播放已经停止事件
+    virtual void stopEvent(MediaPlaybackStateChangeEvent* e) {}
+    virtual void requestHandleEvent(MediaRequestHandleEvent* e) {}
+    virtual void seekEvent(MediaSeekEvent* e) {}
+
 };

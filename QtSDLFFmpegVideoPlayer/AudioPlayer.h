@@ -101,9 +101,9 @@ private:
             threadStateManager.reset();
         }
 
-        void pushRequestTaskQueue(RequestTaskType type, std::function<void(std::any userData)> handler, std::any userData, std::vector<ThreadIdentifier> blockTargetThreadIds, RequestTaskProcessCallbacks callbacks) {
+        void pushRequestTaskQueue(RequestTaskType type, std::function<void(MediaRequestHandleEvent* e, std::any userData)> handler, MediaRequestHandleEvent* event, std::any userData, std::vector<ThreadIdentifier> blockTargetThreadIds, RequestTaskProcessCallbacks callbacks) {
             std::unique_lock lockMtxQueueRequestTasks(mtxQueueRequestTasks); // 独占锁
-            queueRequestTasks.emplace(type, handler, userData, blockTargetThreadIds, callbacks); // 构造入队
+            queueRequestTasks.emplace(type, handler, event, userData, blockTargetThreadIds, callbacks); // 构造入队
             // 记得通知处于等待的请求任务处理线程
             cvQueueRequestTasks.notify_all();
         }
@@ -123,6 +123,7 @@ private:
     AudioPlaybackStateVariables playbackStateVariables;
 
 public:
+    AudioPlayer() : PlayerInterface(logger) {}
     ~AudioPlayer() {
         stop();
     }
@@ -130,7 +131,7 @@ public:
     bool play(const std::string& filePath, const AudioPlayOptions& options) {
         if (!isStopped())
             return false;
-        if (!playerState.trySet(PlayerState::Preparing))
+        if (!trySetPlayerState(PlayerState::Preparing))
             return false;
         setFilePath(filePath);
         playbackStateVariables.playOptions = options;
@@ -139,7 +140,7 @@ public:
     bool play() override {
         if (!isStopped())
             return false;
-        if (!playerState.trySet(PlayerState::Preparing))
+        if (!trySetPlayerState(PlayerState::Preparing))
             return false;
         if (playbackStateVariables.filePath.empty()) // 打开了文件才能播放
             return false;
@@ -150,7 +151,7 @@ public:
         if (isPaused())
         {
             // 恢复播放
-            playerState.set(PlayerState::Playing);
+            setPlayerState(PlayerState::Playing);
             // 唤醒所有线程
             playbackStateVariables.threadStateManager.wakeUpAll();
         }
@@ -158,7 +159,7 @@ public:
     void pause() override {
         if (playerState == PlayerState::Playing)
         {
-            playerState.set(PlayerState::Paused);
+            setPlayerState(PlayerState::Paused);
             // 唤醒所有线程
             playbackStateVariables.threadStateManager.wakeUpAll();
         }
@@ -166,7 +167,7 @@ public:
     void notifyStop() override {
         if (playerState != PlayerState::Stopping && !isStopped())
         {
-            playerState.set(PlayerState::Stopping);
+            setPlayerState(PlayerState::Stopping);
             // 唤醒所有线程
             playbackStateVariables.threadStateManager.wakeUpAll();
             // 唤醒请求任务处理线程
@@ -186,10 +187,10 @@ public:
         if (!isStopped() && playerState != PlayerState::Stopping)
         {
             // 提交seek任务
-            auto seekHandler = std::bind(&AudioPlayer::requestTaskHandlerSeek, this, std::placeholders::_1);
+            auto seekHandler = std::bind(&AudioPlayer::requestTaskHandlerSeek, this, std::placeholders::_1, std::placeholders::_2);
             // 阻塞三个线程（即所有与读包解包相关的线程）
             auto&& blockThreadIds = { ThreadIdentifier::AudioReadingThread, ThreadIdentifier::AudioDecodingThread, ThreadIdentifier::AudioPlayingThread };
-            playbackStateVariables.pushRequestTaskQueue(RequestTaskType::Seek, seekHandler, SeekData{ pts, streamIndex }, blockThreadIds, callbacks);
+            playbackStateVariables.pushRequestTaskQueue(RequestTaskType::Seek, seekHandler, new MediaSeekEvent{ pts, streamIndex }, SeekData{ pts, streamIndex }, blockThreadIds, callbacks);
         }
     }
     void seek(uint64_t pts, StreamIndexType streamIndex = -1, RequestTaskProcessCallbacks callbacks = RequestTaskProcessCallbacks{}) override {
@@ -223,10 +224,26 @@ public:
     }
 
 private:
+    void setPlayerState(PlayerState state) {
+        PlayerState oldState = playerState.load();
+        playerState.set(state, oldState);
+        notifyPlaybackStateChangeHandler(state, oldState);
+    }
+    bool trySetPlayerState(PlayerState state) {
+        PlayerState oldState = playerState.load();
+        bool r = playerState.trySet(state, oldState);
+        notifyPlaybackStateChangeHandler(state, oldState);
+        return r;
+    }
+
+    void notifyPlaybackStateChangeHandler(PlayerState newState, PlayerState oldState) {
+        auto e = MediaPlaybackStateChangeEvent{ newState, oldState };
+        event(&e);
+    }
 
     void resetPlayer() {
         playbackStateVariables.reset();
-        playerState.set(PlayerState::Stopped);
+        setPlayerState(PlayerState::Stopped);
     }
 
     bool playAudioFile();
@@ -279,6 +296,6 @@ private:
 
     void requestTaskProcessor();
 
-    void requestTaskHandlerSeek(std::any userData);
+    void requestTaskHandlerSeek(MediaRequestHandleEvent* e, std::any userData);
 };
 

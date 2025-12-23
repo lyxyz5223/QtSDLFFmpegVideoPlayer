@@ -30,7 +30,7 @@ bool VideoPlayer::playVideoFile()
         return false;
     }
 
-    playerState.set(PlayerState::Playing);
+    setPlayerState(PlayerState::Playing);
     // 启动处理线程
     std::thread threadRequestTaskProcessor(&VideoPlayer::requestTaskProcessor, this);
     // 启动读包
@@ -114,8 +114,11 @@ void VideoPlayer::readPackets()
         {
             if (pkt)
                 av_packet_free(&pkt); // 释放包
-            logger.info("Read frame finished.");
-            break;
+            logger.trace("Read frame finished.");
+            //break; // 读取结束，退出循环
+            // 读取结束，暂停线程，等待通知
+            waitObj.pause();
+            continue;
         }
         if (pkt->stream_index != playbackStateVariables.streamIndex)
         {
@@ -123,7 +126,7 @@ void VideoPlayer::readPackets()
             continue;
         }
         enqueue(playbackStateVariables.packetQueue, pkt);
-        logger.info("Pushed video packet, queue size: {}", oldPktQueueSize + 1);
+        logger.trace("Pushed video packet, queue size: {}", oldPktQueueSize + 1);
         if (oldPktQueueSize + 1 <= MIN_VIDEO_PACKET_QUEUE_SIZE)
             threadStateManager.wakeUpById(ThreadIdentifier::VideoDecodingThread);
     }
@@ -163,7 +166,7 @@ void VideoPlayer::packet2VideoFrames()
         }
         if (!videoPkt) // 一定要过滤空包，否则avcodec_send_packet将会设置为EOF，之后将无法继续解包
             continue;
-        logger.info("Got video packet, current video packet queue size: {}", getQueueSize(playbackStateVariables.packetQueue));
+        logger.trace("Got video packet, current video packet queue size: {}", getQueueSize(playbackStateVariables.packetQueue));
         UniquePtr<AVPacket> pktPtr{ videoPkt, constDeleterAVPacket };
         int aspRst = avcodec_send_packet(playbackStateVariables.codecCtx.get(), videoPkt);
         if (aspRst < 0 && aspRst != AVERROR(EAGAIN) && aspRst != AVERROR_EOF)
@@ -261,7 +264,7 @@ void VideoPlayer::renderVideo()
             }
             rawFrame.reset(frame); // 取出队列头部元素
         }
-        logger.info("Got video frame, current video frame queue size: {}", getQueueSize(playbackStateVariables.frameQueue));
+        logger.trace("Got video frame, current video frame queue size: {}", getQueueSize(playbackStateVariables.frameQueue));
 
         // 视频帧处理
 
@@ -276,7 +279,7 @@ void VideoPlayer::renderVideo()
                 AVPixelFormat* dstFormats = nullptr;
                 if (av_hwframe_transfer_get_formats(rawFrame->hw_frames_ctx, AV_HWFRAME_TRANSFER_DIRECTION_FROM, &dstFormats, 0) < 0)
                 {
-                    logger.info("Error getting the data transfer format from GPU memory");
+                    logger.error("Error getting the data transfer format from GPU memory");
                     //hwTransferDstPixFormat = AV_PIX_FMT_NV12; // 默认尝试使用NV12格式
                     hwTransferDstPixFormat = AV_PIX_FMT_NONE; // 默认自动尝试
                 }
@@ -290,7 +293,7 @@ void VideoPlayer::renderVideo()
             /* 将解码后的数据从GPU内存存格式转为CPU内存格式，并完成GPU到CPU内存的拷贝*/
             if (av_hwframe_transfer_data(swFrame.get(), rawFrame.get(), 0) < 0)
             {
-                logger.info("Error transferring the data from GPU memory to system memory");
+                logger.error("Error transferring the data from GPU memory to system memory");
                 continue; // 跳过当前帧，继续解码下一帧
             }
             // 复制属性信息
@@ -373,7 +376,7 @@ void VideoPlayer::renderVideo()
                     0, videoFrame->height, switchedFrame->data, switchedFrame->linesize);
                 // 复制属性信息
                 av_frame_copy_props(switchedFrame.get(), rawFrame.get());
-                //logger.info("sws_scale: Output height: {}", outputSliceHeight);
+                //logger.trace("sws_scale: Output height: {}", outputSliceHeight);
                 switchedFrame->ch_layout = videoFrame->ch_layout;
                 switchedFrame->width = scaleSize.width();
                 switchedFrame->height = scaleSize.height();
@@ -441,8 +444,8 @@ void VideoPlayer::renderVideo()
                 if (sleepTime > 0)
                 {
                     // 需要等待
-                    ThreadSleepMs(sleepTime);
                     logger.info("Video sleep: {} ms", sleepTime);
+                    ThreadSleepMs(sleepTime);
                 }
                 else //if (sleepTime < 0)
                 {
@@ -591,12 +594,22 @@ void VideoPlayer::requestTaskProcessor()
         //    if (t.joinable())
         //        t.join();
         // 执行任务处理函数
-        if (taskItem.callbacks.beforeProcess)
-            taskItem.callbacks.beforeProcess(taskItem);
-        if (taskItem.handler)
-            taskItem.handler(taskItem.userData);
-        if (taskItem.callbacks.afterProcess)
-            taskItem.callbacks.afterProcess(taskItem);
+        auto&& requestBeforeHandleEvent = taskItem.event->clone(RequestHandleState::BeforeHandle);
+        auto&& requestAfterHandleEvent = taskItem.event->clone(RequestHandleState::AfterHandle);
+        event(requestBeforeHandleEvent.get());
+        if (requestBeforeHandleEvent->isAccepted()) // 只有被接受的任务才处理
+        {
+            if (taskItem.callbacks.beforeProcess)
+                taskItem.callbacks.beforeProcess(taskItem);
+            if (taskItem.handler)
+                taskItem.handler(taskItem.event, taskItem.userData);
+            if (taskItem.callbacks.afterProcess)
+                taskItem.callbacks.afterProcess(taskItem);
+            event(requestAfterHandleEvent.get());
+        }
+        // 清理内存
+        delete taskItem.event;
+        // 移除已处理的任务
         lockMtxQueueRequestTasks.lock();
         queueRequestTasks.pop();
         lockMtxQueueRequestTasks.unlock();
@@ -606,10 +619,10 @@ void VideoPlayer::requestTaskProcessor()
     }
 }
 
-void VideoPlayer::requestTaskHandlerSeek(std::any userData)
+void VideoPlayer::requestTaskHandlerSeek(MediaRequestHandleEvent* e, std::any userData)
 {
     // 先将播放器状态调整至非播放中状态
-    playerState.set(PlayerState::Seeking);
+    setPlayerState(PlayerState::Seeking);
     // 此时已经所有相关线程均已暂停
     SeekData seekData = std::any_cast<SeekData>(userData);
     uint64_t pts = seekData.pts;
@@ -638,5 +651,5 @@ void VideoPlayer::requestTaskHandlerSeek(std::any userData)
         playbackStateVariables.playOptions.clockSyncFunction(playbackStateVariables.videoClock, false, playbackStateVariables.realtimeClock, sleepTime);
     }
     // 恢复播放状态
-    playerState.set(PlayerState::Playing);
+    setPlayerState(PlayerState::Playing);
 }

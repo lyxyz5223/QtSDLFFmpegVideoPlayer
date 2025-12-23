@@ -53,14 +53,16 @@ protected:
             if (taskItem.type == RequestTaskType::Seek)
             {
                 std::unique_lock lock(mtxVideoSeekCount);
-                videoSeekProcessingCount.fetch_add(1);
+                //videoSeekProcessingCount.fetch_add(1);
+                videoSeekProcessingCount = 1;
             }
         },
         [&] (const RequestTaskItem& taskItem) {
             if (taskItem.type == RequestTaskType::Seek)
             {
                 std::unique_lock lock(mtxVideoSeekCount);
-                videoSeekProcessingCount.fetch_sub(1);
+                //videoSeekProcessingCount.fetch_sub(1);
+                videoSeekProcessingCount = 0;
             }
         }
     };
@@ -69,14 +71,16 @@ protected:
             if (taskItem.type == RequestTaskType::Seek)
             {
                 std::unique_lock lock(mtxAudioSeekCount);
-                audioSeekProcessingCount.fetch_add(1);
+                //audioSeekProcessingCount.fetch_add(1);
+                audioSeekProcessingCount = 1;
             }
         },
         [&] (const RequestTaskItem& taskItem) {
             if (taskItem.type == RequestTaskType::Seek)
             {
                 std::unique_lock lock(mtxAudioSeekCount);
-                audioSeekProcessingCount.fetch_sub(1);
+                //audioSeekProcessingCount.fetch_sub(1);
+                audioSeekProcessingCount = 0;
             }
         }
     };
@@ -156,11 +160,15 @@ protected:
             {
                 double sleepTimeS = videoClock.load() - audioClock.load(); // 单位：秒
                 sleepTime = static_cast<int64_t>(sleepTimeS * 1000); // 转换为毫秒
+                if (sleepTime > 10000) // 超过10秒，调试一下
+                    sleepTime = 0;
             }
             else
             {
                 double sleepTimeS = videoClock.load() - videoRealtimeClock; // 单位：秒
                 sleepTime = static_cast<int64_t>(sleepTimeS * 1000); // 转换为毫秒
+                if (sleepTime > 10000) // 超过10秒，调试一下
+                    sleepTime = 0;
             }
             return true; // 直接返回true，交给调用者处理
             // 返回值true && (sleepTime != 0)表示需要睡眠/丢帧，false || (sleepTime == 0)表示不需要
@@ -169,6 +177,7 @@ protected:
         };
 
 public:
+    MediaPlayer() : PlayerInterface(logger) {}
     ~MediaPlayer() {
         if (!this->isStopped())
             this->stop();
@@ -229,6 +238,7 @@ public:
     // 跳转到指定pts位置
     // \param streamIndex -1表示使用AV_TIME_BASE计算，否则使用streamIndex指定的流的time_base
     void notifySeek(uint64_t pts, StreamIndexType streamIndex = -1, RequestTaskProcessCallbacks callbacks = RequestTaskProcessCallbacks{}) override {
+        videoSeekProcessingCount = audioSeekProcessingCount = 1;
         RequestTaskProcessCallbacks videoCallbacks{ combineRequestTaskProcessCallbacks(videoRequestTaskProcessCallbacks, callbacks) };
         RequestTaskProcessCallbacks audioCallbacks{ combineRequestTaskProcessCallbacks(audioRequestTaskProcessCallbacks, callbacks) };
         std::thread videoThread([&] { this->videoPlayer.notifySeek(pts, streamIndex, videoCallbacks); });
@@ -239,6 +249,7 @@ public:
             videoThread.join();
     }
     void seek(uint64_t pts, StreamIndexType streamIndex = -1, RequestTaskProcessCallbacks callbacks = RequestTaskProcessCallbacks{}) override {
+        videoSeekProcessingCount = audioSeekProcessingCount = 1;
         RequestTaskProcessCallbacks videoCallbacks{ combineRequestTaskProcessCallbacks(videoRequestTaskProcessCallbacks, callbacks) };
         RequestTaskProcessCallbacks audioCallbacks{ combineRequestTaskProcessCallbacks(audioRequestTaskProcessCallbacks, callbacks) };
         std::thread videoThread([&] { this->videoPlayer.seek(pts, streamIndex, videoCallbacks); });

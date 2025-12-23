@@ -37,7 +37,7 @@ bool AudioPlayer::playAudioFile()
     }
 
     // 修改状态为：播放中
-    playerState.set(PlayerState::Playing);
+    setPlayerState(PlayerState::Playing);
     // 启动处理线程
     std::thread threadRequestTaskProcessor(&AudioPlayer::requestTaskProcessor, this);
     // 启动读包
@@ -120,7 +120,7 @@ bool AudioPlayer::openOutputAudioStream(int sampleRate, AVChannelLayout channelL
             });
     }
     catch (const std::exception& e) {
-        logger.info("Cannot set audio error callback: {}", e.what());
+        logger.error("Cannot set audio error callback: {}", e.what());
     }
     // 音频输出流
     AudioAdapter::AudioStreamParameters outputParams;
@@ -252,8 +252,11 @@ void AudioPlayer::readPackets()
         {
             if (pkt)
                 av_packet_free(&pkt); // 释放包
-            logger.info("Read frame finished.");
-            break;
+            logger.trace("Read frame finished.");
+            //break; // 读取结束，退出循环
+            // 读取结束，暂停线程，等待通知
+            waitObj.pause();
+            continue;
         }
         if (pkt->stream_index != playbackStateVariables.streamIndex)
         {
@@ -262,7 +265,7 @@ void AudioPlayer::readPackets()
         }
         enqueue(playbackStateVariables.packetQueue, pkt);
         //auto pktQueueSize = getQueueSize(playbackStateVariables.packetQueue);
-        logger.info("Pushed audio packet, queue size: {}", oldPktQueueSize + 1);
+        logger.trace("Pushed audio packet, queue size: {}", oldPktQueueSize + 1);
         if (oldPktQueueSize + 1 <= MIN_AUDIO_PACKET_QUEUE_SIZE)
             threadStateManager.wakeUpById(ThreadIdentifier::AudioDecodingThread);
     }
@@ -302,7 +305,7 @@ void AudioPlayer::packet2AudioStreams()
         if (getQueueSize(playbackStateVariables.packetQueue) < MIN_AUDIO_PACKET_QUEUE_SIZE)
             threadStateManager.wakeUpById(ThreadIdentifier::AudioReadingThread);
 
-        logger.info("Current audio stream queue size: {}", streamQueueSize);
+        logger.trace("Current audio stream queue size: {}", streamQueueSize);
         // 如果队列中有包，则取出解码
         AVPacket* pkt = nullptr;
         if (!tryDequeue(playbackStateVariables.packetQueue, pkt))
@@ -312,7 +315,7 @@ void AudioPlayer::packet2AudioStreams()
         }
         if (!pkt) // 一定要过滤空包，否则avcodec_send_packet将会设置为EOF，之后将无法继续解包
             continue;
-        logger.info("Got audio packet, current audio packet queue size: {}", getQueueSize(playbackStateVariables.packetQueue));
+        logger.trace("Got audio packet, current audio packet queue size: {}", getQueueSize(playbackStateVariables.packetQueue));
         UniquePtr<AVPacket> pktPtr{ pkt, constDeleterAVPacket };
         int aspRst = avcodec_send_packet(playbackStateVariables.codecCtx.get(), pkt);
         if (aspRst < 0 && aspRst != AVERROR(EAGAIN) && aspRst != AVERROR_EOF)
@@ -453,8 +456,8 @@ AudioAdapter::AudioCallbackResult AudioPlayer::renderAudioAsyncCallback(void*& o
             if (sleepTime > 0)
             {
                 // 需要等待
-                ThreadSleepMs(sleepTime);
                 logger.info("Audio sleep: {} ms", sleepTime);
+                ThreadSleepMs(sleepTime);
             }
             else //if (sleepTime < 0)
             {
@@ -528,12 +531,22 @@ void AudioPlayer::requestTaskProcessor()
         //    if (t.joinable())
         //        t.join();
         // 执行任务处理函数
-        if (taskItem.callbacks.beforeProcess)
-            taskItem.callbacks.beforeProcess(taskItem);
-        if (taskItem.handler)
-            taskItem.handler(taskItem.userData);
-        if (taskItem.callbacks.afterProcess)
-            taskItem.callbacks.afterProcess(taskItem);
+        auto&& requestBeforeHandleEvent = taskItem.event->clone(RequestHandleState::BeforeHandle);
+        auto&& requestAfterHandleEvent = taskItem.event->clone(RequestHandleState::AfterHandle);
+        event(requestBeforeHandleEvent.get());
+        if (requestBeforeHandleEvent->isAccepted()) // 只有被接受的任务才处理
+        {
+            if (taskItem.callbacks.beforeProcess)
+                taskItem.callbacks.beforeProcess(taskItem);
+            if (taskItem.handler)
+                taskItem.handler(taskItem.event, taskItem.userData);
+            if (taskItem.callbacks.afterProcess)
+                taskItem.callbacks.afterProcess(taskItem);
+            event(requestAfterHandleEvent.get());
+        }
+        // 清理内存
+        delete taskItem.event;
+        // 移除已处理的任务
         lockMtxQueueRequestTasks.lock();
         queueRequestTasks.pop();
         lockMtxQueueRequestTasks.unlock();
@@ -543,10 +556,10 @@ void AudioPlayer::requestTaskProcessor()
     }
 }
 
-void AudioPlayer::requestTaskHandlerSeek(std::any userData)
+void AudioPlayer::requestTaskHandlerSeek(MediaRequestHandleEvent* e, std::any userData)
 {
     // 先将播放器状态调整至非播放中状态
-    playerState.set(PlayerState::Seeking);
+    setPlayerState(PlayerState::Seeking);
     // 此时已经所有相关线程均已暂停
     SeekData seekData = std::any_cast<SeekData>(userData);
     uint64_t pts = seekData.pts;
@@ -576,5 +589,5 @@ void AudioPlayer::requestTaskHandlerSeek(std::any userData)
         playbackStateVariables.playOptions.clockSyncFunction(playbackStateVariables.audioClock, false, playbackStateVariables.realtimeClock, sleepTime);
     }
     // 恢复播放状态
-    playerState.set(PlayerState::Playing);
+    setPlayerState(PlayerState::Playing);
 }
