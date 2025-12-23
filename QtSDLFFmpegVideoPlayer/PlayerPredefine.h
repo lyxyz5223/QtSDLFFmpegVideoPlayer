@@ -454,11 +454,15 @@ public:
             // 设置为阻塞并等待状态变更
             void setBlockedAndWaitChanged(bool wakeUpBeforeWait = true) {
                 std::unique_lock lock(obj.mtx);
-                obj.noWakeUp = true;
                 obj.state.set(Blocking);
                 if (wakeUpBeforeWait)
                     obj.cv.notify_all();
                 obj.cv.wait(lock, [&] { return obj.state == Blocked; });
+            }
+            void disableWakeUp() {
+                obj.noWakeUp = true;
+            }
+            void enableWakeUp() {
                 obj.noWakeUp = false;
             }
             // 唤醒线程

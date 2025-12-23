@@ -582,6 +582,7 @@ void VideoPlayer::requestTaskProcessor()
                 try {
                     auto && tsc = threadStateManager.get(threadId);
                     waitObjs.push_back(tsc);
+                    tsc.disableWakeUp();
                     tsc.setBlockedAndWaitChanged(true);
                 }
                 catch (std::exception e) {
@@ -615,7 +616,10 @@ void VideoPlayer::requestTaskProcessor()
         lockMtxQueueRequestTasks.unlock();
         // 通知所有暂停的线程继续运行
         for (auto& waitObj : waitObjs)
+        {
+            waitObj.enableWakeUp();
             waitObj.wakeUp(); // 唤醒线程
+        }
     }
 }
 
