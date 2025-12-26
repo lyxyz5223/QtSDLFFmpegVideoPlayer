@@ -5,22 +5,23 @@
 template <typename T, typename UnderLyingType=std::underlying_type_t<T>>
 class EnumType {
 private:
-    T value{ static_cast<T>(0) };
+    T v{ static_cast<T>(0) };
 public:
-    EnumType(T t) : value(t) {}
-    EnumType(const EnumType& t) : value(t.value) {}
-    EnumType(const EnumType&& t) noexcept : value(t.value) {}
+    EnumType(T t) : v(t) {}
+    EnumType(const EnumType& t) : v(t.v) {}
+    EnumType(const EnumType&& t) noexcept : v(t.v) {}
     ~EnumType() = default;
-    T type() const { return value; }
+    T value() const { return v; }
     std::string name() const;
+    static std::string getName(T value);
     bool isEqual(const EnumType& other) const {
-        return value == other.value;
+        return v == other.v;
     }
     operator T() {
-        return value;
+        return v;
     }
     operator UnderLyingType() {
-        return static_cast<int>(value);
+        return static_cast<int>(v);
     }
     bool operator==(const EnumType& other) const {
         return isEqual(other);
@@ -30,7 +31,7 @@ public:
     }
     EnumType& operator=(const EnumType& other) {
         if (this != &other)
-            value = other.value;
+            v = other.v;
         return *this;
     }
 };

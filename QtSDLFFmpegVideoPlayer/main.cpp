@@ -1,6 +1,6 @@
-#include "QtSDLFFmpegVideoPlayer.h"
+#include "QtUIs/QtSDLFFmpegVideoPlayer.h"
 #include <QtWidgets/QApplication>
-#include "SDLApp.h"
+#include <SDLApp.h>
 #include <SDL3/SDL_main.h>
 
 int main(int argc, char *argv[])

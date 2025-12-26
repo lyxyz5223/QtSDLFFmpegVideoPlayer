@@ -31,6 +31,7 @@ extern "C"
 }
 #include <Logger.h>
 
+#include "EnumDefine.h"
 #include "MultiEnumTypeDefine.h"
 #include "AtomicWaitObject.h"
 
@@ -103,21 +104,24 @@ public:
             while (!this->compare_exchange_strong(tmp, s));
         }
         virtual void set(T s, T& old) {
-            old = this->load();
-            while (!this->compare_exchange_strong(old, s));
+            auto tmp = this->load();
+            while (!this->compare_exchange_strong(tmp, s));
+            old = tmp;
         }
         virtual bool trySet(T s) {
             auto tmp = this->load();
             return this->compare_exchange_strong(tmp, s);
         }
         virtual bool trySet(T s, T& old) {
-            old = this->load();
-            return this->compare_exchange_strong(old, s);
+            auto tmp = this->load();
+            bool r =this->compare_exchange_strong(tmp, s);
+            old = tmp;
+            return r;
         }
     };
-    using AtomicInt = std::atomic<int>;
-    using AtomicDouble = std::atomic<double>;
-    using AtomicBool = std::atomic<bool>;
+    using AtomicInt = Atomic<int>;
+    using AtomicDouble = Atomic<double>;
+    using AtomicBool = Atomic<bool>;
 
     template <typename T>
     class AtomicStateMachine : public Atomic<T> {
@@ -131,9 +135,11 @@ public:
                 prevValue.set(tmp);
         }
         virtual void set(T s, T& old) override {
-            old = this->load();
-            while (!this->compare_exchange_strong(old, s))
-                prevValue.set(old);
+            auto tmp = this->load();
+            prevValue.set(tmp);
+            while (!this->compare_exchange_strong(tmp, s))
+                prevValue.set(tmp);
+            old = tmp;
         }
         virtual bool trySet(T s) override {
             auto tmp = this->load();
@@ -142,9 +148,10 @@ public:
             return r;
         }
         virtual bool trySet(T s, T& old) override {
-            old = this->load();
-            bool r = this->compare_exchange_strong(old, s);
-            prevValue.set(old);
+            auto tmp = this->load();
+            bool r = this->compare_exchange_strong(tmp, s);
+            prevValue.set(tmp);
+            old = tmp;
             return r;
         }
         virtual T prev() const {
@@ -206,6 +213,7 @@ public:
         Seeking = 6,
         //Finished = 7,
     };
+    using PlayerStateEnum = EnumType<PlayerState>;
 
     enum class MediaType : char {
         Unknown = -1,
@@ -221,8 +229,10 @@ public:
         Seek = 1,
     };
     enum class RequestHandleState {
+        BeforeEnqueue,
+        AfterEnqueue,
         BeforeHandle,
-        AfterHandle
+        AfterHandle,
     };
     enum class ThreadIdentifier {
         None = 0,
@@ -240,6 +250,7 @@ public:
             None = 0,
             PlaybackStateChange,
             RequestHandle,
+            Render,
         };
     private:
         MediaEvent type{ None };
@@ -253,8 +264,17 @@ public:
         bool isEqual(const MediaEventType& other) const {
             return type == other.type;
         }
+        bool isEqual(const MediaEventType::MediaEvent& e) const {
+            return type == e;
+        }
         operator MediaEvent() {
             return type;
+        }
+        bool operator==(const MediaEventType::MediaEvent& e) const {
+            return isEqual(e);
+        }
+        bool operator!=(const MediaEventType::MediaEvent& e) const {
+            return !isEqual(e);
         }
         bool operator==(const MediaEventType& other) const {
             return isEqual(other);
@@ -273,11 +293,19 @@ public:
     class MediaEvent {
         friend class MediaEventDispatcher;
         virtual void setType(MediaEventType t) final { this->eventType = t; }
+        virtual void setStreamTypes(StreamTypes type) final { this->stream = type; }
+        virtual void setStreamType(StreamType type, bool enabled = true) final { if (enabled) this->stream |= type; else this->stream &= static_cast<decltype(type)>(~type); }
     protected:
         MediaEventType eventType{ MediaEventType::None };
+        StreamTypes stream{ StreamType::STNone };
     public:
-        MediaEvent(MediaEventType t) : eventType(t) {}
+        MediaEvent(MediaEventType t, StreamType st) : eventType(t), stream(st) {}
         virtual MediaEventType type() const { return this->eventType; }
+        // 可能包含多种流，这取决于对象（如VideoPlayer只包含STVideo，而MediaPlayer可能包含STVideo|STAudio）
+        virtual StreamTypes streamType() const { return this->stream; }
+        virtual UniquePtrD<MediaEvent> clone() const {
+            return std::make_unique<MediaEvent>(*this);
+        }
     };
     //class MediaEventDispatcher {
     //    PlayerInterface* player{ nullptr };
@@ -298,26 +326,42 @@ public:
         PlayerState os{ PlayerState::Stopped };
         PlayerState s{ PlayerState::Stopped };
     public:
-        MediaPlaybackStateChangeEvent(PlayerState state, PlayerState oldState)
-            : MediaEvent(MediaEventType::PlaybackStateChange), os(oldState), s(state) {
+        MediaPlaybackStateChangeEvent(StreamTypes st, PlayerState state, PlayerState oldState)
+            : MediaEvent(MediaEventType::PlaybackStateChange, st), os(oldState), s(state) {
+        }
+        virtual UniquePtrD<MediaEvent> clone() const {
+            return std::make_unique<MediaPlaybackStateChangeEvent>(*this);
         }
         PlayerState state() const { return s; }
         PlayerState oldState() const { return os; }
     };
+    //class MediaRenderEvent : public MediaEvent {
+    //    
+    //public:
+    //    MediaRenderEvent(StreamTypes st) : MediaEvent(MediaEventType::Render, st) {}
+    //    virtual UniquePtrD<MediaEvent> clone() const {
+    //        return std::make_unique<MediaRenderEvent>(*this);
+    //    }
+    //};
+
+    // 请求处理事件，用于处理一些需要播放器响应的请求，如Seek等
+    // 可以在请求处理前后进行拦截处理
+    // 亦可以阻止请求入队
     class MediaRequestHandleEvent : public MediaEvent {
     protected:
         RequestHandleState state{ RequestHandleState::BeforeHandle };
         RequestTaskType reqType{ RequestTaskType::Seek };
         bool accepted{ true }; // 默认接受该请求
     public:
-        MediaRequestHandleEvent(RequestTaskType t)
-            : MediaEvent(MediaEventType::RequestHandle), reqType(t) {
+        // 默认BeforeHandle构造
+        MediaRequestHandleEvent(StreamTypes st, RequestTaskType t)
+            : MediaEvent(MediaEventType::RequestHandle, st), reqType(t) {
         }
-        MediaRequestHandleEvent(RequestHandleState s, RequestTaskType t)
-            : MediaEvent(MediaEventType::RequestHandle), state(s), reqType(t) {
+        MediaRequestHandleEvent(StreamTypes st, RequestHandleState s, RequestTaskType t)
+            : MediaEvent(MediaEventType::RequestHandle, st), state(s), reqType(t) {
         }
         MediaRequestHandleEvent(RequestHandleState newState, const MediaRequestHandleEvent& toClone)
-            : MediaEvent(MediaEventType::RequestHandle), state(newState), reqType(toClone.reqType), accepted(toClone.accepted) {
+            : MediaEvent(MediaEventType::RequestHandle, toClone.stream), state(newState), reqType(toClone.reqType), accepted(toClone.accepted) {
         }
         virtual RequestHandleState handleState() const { return state; }
         virtual RequestTaskType requestType() const { return reqType; }
@@ -327,7 +371,7 @@ public:
         virtual void ignore() { accepted = false; }
         virtual void setAccepted(bool a) { accepted = a; }
         virtual bool isAccepted() const { return accepted; }
-        virtual UniquePtrD<MediaRequestHandleEvent> clone() const {
+        virtual UniquePtrD<MediaEvent> clone() const {
             return std::make_unique<MediaRequestHandleEvent>(*this);
         }
         virtual UniquePtrD<MediaRequestHandleEvent> clone(RequestHandleState newState) const {
@@ -340,15 +384,16 @@ public:
         uint64_t pts{ 0 };
         StreamIndexType idx{ -1 };
     public:
-        MediaSeekEvent(uint64_t pts, StreamIndexType streamIndex = -1)
-            : MediaRequestHandleEvent(RequestTaskType::Seek), pts(pts), idx(streamIndex) {}
-        MediaSeekEvent(RequestHandleState handleState, uint64_t pts, StreamIndexType streamIndex = -1)
-            : MediaRequestHandleEvent(handleState, RequestTaskType::Seek), pts(pts), idx(streamIndex) {}
+        // 默认BeforeHandle构造
+        MediaSeekEvent(StreamTypes st, uint64_t pts, StreamIndexType streamIndex = -1)
+            : MediaRequestHandleEvent(st, RequestTaskType::Seek), pts(pts), idx(streamIndex) {}
+        MediaSeekEvent(StreamTypes st, RequestHandleState handleState, uint64_t pts, StreamIndexType streamIndex = -1)
+            : MediaRequestHandleEvent(st, handleState, RequestTaskType::Seek), pts(pts), idx(streamIndex) {}
         MediaSeekEvent(RequestHandleState newState, const MediaSeekEvent& toClone)
             : MediaRequestHandleEvent(newState, toClone), pts(toClone.pts), idx(toClone.idx) {}
         virtual uint64_t timestamp() const { return pts; }
         virtual StreamIndexType streamIndex() const { return idx; }
-        virtual UniquePtrD<MediaRequestHandleEvent> clone() const override {
+        virtual UniquePtrD<MediaEvent> clone() const override {
             return std::make_unique<MediaSeekEvent>(*this);
         }
         virtual UniquePtrD<MediaRequestHandleEvent> clone(RequestHandleState newState) const override {
@@ -360,17 +405,16 @@ public:
     // 用于处理一些请求任务
     struct RequestTaskItem;
     using RequestTaskProcessCallback = std::function<void(const RequestTaskItem& taskItem)>;
-    struct RequestTaskProcessCallbacks {
-        RequestTaskProcessCallback beforeProcess;
-        RequestTaskProcessCallback afterProcess;
-    };
+    //struct RequestTaskProcessCallbacks {
+    //    RequestTaskProcessCallback beforeProcess;
+    //    RequestTaskProcessCallback afterProcess;
+    //};
     struct RequestTaskItem {
         RequestTaskType type{ RequestTaskType::None }; // 任务类型
         std::function<void(MediaRequestHandleEvent* e, std::any userData)> handler; // 处理函数
         MediaRequestHandleEvent* event; // 关联的事件对象指针
         std::any userData; // 用户数据
         std::vector<ThreadIdentifier> blockTargetThreadIds; // 需要暂停等待当前任务处理完成的线程ID列表
-        RequestTaskProcessCallbacks callbacks;
     };
 
     // 打开文件的时候会查找流，并调用流选择器，用于选择需要解码的流
@@ -460,10 +504,10 @@ public:
                 obj.cv.wait(lock, [&] { return obj.state == Blocked; });
             }
             void disableWakeUp() {
-                obj.noWakeUp = true;
+                obj.noWakeUp.store(true);
             }
             void enableWakeUp() {
-                obj.noWakeUp = false;
+                obj.noWakeUp.store(false);
             }
             // 唤醒线程
             void wakeUp() {
@@ -801,14 +845,14 @@ public:
     virtual void pause() = 0;
     virtual void notifyStop() = 0;
     virtual void stop() = 0;
-    virtual void notifySeek(uint64_t pts, StreamIndexType streamIndex = -1, RequestTaskProcessCallbacks callbacks = RequestTaskProcessCallbacks{}) = 0;
-    virtual void seek(uint64_t pts, StreamIndexType streamIndex = -1, RequestTaskProcessCallbacks callbacks = RequestTaskProcessCallbacks{}) = 0;
+    virtual void notifySeek(uint64_t pts, StreamIndexType streamIndex = -1) = 0;
+    virtual void seek(uint64_t pts, StreamIndexType streamIndex = -1) = 0;
     virtual bool isPlaying() const = 0;
     virtual bool isPaused() const = 0;
     virtual bool isStopped() const = 0;
     virtual void setFilePath(const std::string& filePath) = 0;
     virtual std::string getFilePath() const = 0;
-    virtual void setStreamIndexSelector(const StreamIndexSelector& selector) = 0;
+    //virtual void setStreamIndexSelector(const StreamIndexSelector& selector) = 0;
     //virtual void setVolume(double volume) = 0;
     
     // 方法一
@@ -817,17 +861,22 @@ public:
 
     // 方法二
 protected:
+    // 事件分发入口
     virtual bool event(MediaEvent* e);
+    // 播放状态改变事件（重写该方法不会影响其子事件（start,pause,resume,stop）的事件分发）
     virtual void playbackStateChangeEvent(MediaPlaybackStateChangeEvent* e) {}
-    // 已经开始播放事件
+    // 已经开始播放事件（启动读取解码渲染线程前），隶属于播放状态改变事件
     virtual void startEvent(MediaPlaybackStateChangeEvent* e) {}
-    // 暂停播放事件
+    // 暂停播放事件，隶属于播放状态改变事件
     virtual void pauseEvent(MediaPlaybackStateChangeEvent* e) {}
-    // 恢复播放事件
+    // 恢复播放事件，隶属于播放状态改变事件
     virtual void resumeEvent(MediaPlaybackStateChangeEvent* e) {}
-    // 播放已经停止事件
+    // 播放已经停止事件，隶属于播放状态改变事件
     virtual void stopEvent(MediaPlaybackStateChangeEvent* e) {}
+    //virtual void renderEvent(MediaRenderEvent* e) {}
+    // 请求处理事件（重写该方法不会影响其子事件（seek）的事件分发）
     virtual void requestHandleEvent(MediaRequestHandleEvent* e) {}
+    // seek进度调整事件，隶属于请求处理事件
     virtual void seekEvent(MediaSeekEvent* e) {}
 
 };

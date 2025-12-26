@@ -1,40 +1,49 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="Source Files">
-      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
-      <Extensions>qml;cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
-    </Filter>
-    <Filter Include="Header Files">
-      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
-      <Extensions>h;hh;hpp;hxx;hm;inl;inc;xsd</Extensions>
-    </Filter>
     <Filter Include="Resource Files">
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>qrc;rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
-    <Filter Include="Form Files">
-      <UniqueIdentifier>{99349809-55BA-4b9d-BF79-8FDBB0286EB3}</UniqueIdentifier>
-      <Extensions>ui</Extensions>
-    </Filter>
     <Filter Include="Translation Files">
       <UniqueIdentifier>{639EADAA-A684-42e4-A9AD-28FC9BCB8F7C}</UniqueIdentifier>
       <Extensions>ts</Extensions>
+    </Filter>
+    <Filter Include="AudioAdapter">
+      <UniqueIdentifier>{c85f0962-24fc-4eba-9f55-59596da50a02}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Players">
+      <UniqueIdentifier>{76a323c8-8759-424d-9095-12b35ccd0f72}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="QtUIs">
+      <UniqueIdentifier>{6b2daf54-b5f2-4720-9fa2-4c049d89b1b5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="QtUIs\Form Files">
+      <UniqueIdentifier>{99349809-55BA-4b9d-BF79-8FDBB0286EB3}</UniqueIdentifier>
+      <Extensions>ui</Extensions>
+    </Filter>
+    <Filter Include="1Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;hm;inl;inc;xsd</Extensions>
+    </Filter>
+    <Filter Include="1Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>qml;cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="SDLUtils">
+      <UniqueIdentifier>{8b51b84d-63d5-4309-aa9c-7cf1b8e16e83}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Utils">
+      <UniqueIdentifier>{fad0e67c-819d-4fc4-b05d-5d5c8d6cc125}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="QtUIs\SDLs">
+      <UniqueIdentifier>{b3c322d0-b4d7-48e8-972f-f8dc09c39fd0}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
     <QtRcc Include="QtSDLFFmpegVideoPlayer.qrc">
       <Filter>Resource Files</Filter>
     </QtRcc>
-    <QtUic Include="QtSDLFFmpegVideoPlayer.ui">
-      <Filter>Form Files</Filter>
-    </QtUic>
-    <QtMoc Include="QtSDLFFmpegVideoPlayer.h">
-      <Filter>Header Files</Filter>
-    </QtMoc>
-    <ClCompile Include="QtSDLFFmpegVideoPlayer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <None Include="QtSDLFFmpegVideoPlayer.ico">
       <Filter>Resource Files</Filter>
     </None>
@@ -44,89 +53,94 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>1Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="VideoPlayer.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="AudioAdapter\AudioAdapter.cpp">
+      <Filter>AudioAdapter</Filter>
     </ClCompile>
-    <ClCompile Include="SDLWidget.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="Players\AudioPlayer.cpp">
+      <Filter>Players</Filter>
     </ClCompile>
-    <ClCompile Include="SDLApp.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="Players\MediaPlayer.cpp">
+      <Filter>Players</Filter>
     </ClCompile>
-    <ClCompile Include="AudioPlayer.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="Players\PlayerPredefine.cpp">
+      <Filter>Players</Filter>
     </ClCompile>
-    <ClCompile Include="AudioAdapter.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="Players\VideoPlayer.cpp">
+      <Filter>Players</Filter>
     </ClCompile>
-    <ClCompile Include="PortAudioAdapter.h">
-      <Filter>Header Files</Filter>
+    <ClCompile Include="QtUIs\QtSDLFFmpegVideoPlayer.cpp">
+      <Filter>QtUIs</Filter>
     </ClCompile>
-    <ClCompile Include="OldVideoPlayer.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="QtUIs\RoundedIconButton.cpp">
+      <Filter>QtUIs</Filter>
     </ClCompile>
-    <ClCompile Include="MediaPlayer.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="SDLUtils\SDLApp.cpp">
+      <Filter>SDLUtils</Filter>
     </ClCompile>
-    <ClCompile Include="SDLMediaPlayer.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="SDLUtils\SDLMediaPlayer.cpp">
+      <Filter>SDLUtils</Filter>
     </ClCompile>
-    <ClCompile Include="RoundedIconButton.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="PlayerPredefine.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="EnumDefine.h">
-      <Filter>Header Files</Filter>
+    <ClCompile Include="QtUIs\SDLWidget.cpp">
+      <Filter>QtUIs\SDLs</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="SDLWidget.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="AudioAdapter\AudioAdapter.h">
+      <Filter>AudioAdapter</Filter>
     </ClInclude>
-    <ClInclude Include="VideoPlayer.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="AudioAdapter\PortAudioAdapter.h">
+      <Filter>AudioAdapter</Filter>
     </ClInclude>
-    <ClInclude Include="MultiEnumTypeDefine.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="AudioAdapter\RtAudioAdapter.h">
+      <Filter>AudioAdapter</Filter>
     </ClInclude>
-    <ClInclude Include="SDLApp.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="Players\AudioPlayer.h">
+      <Filter>Players</Filter>
     </ClInclude>
-    <ClInclude Include="AudioPlayer.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="Players\MediaPlayer.h">
+      <Filter>Players</Filter>
     </ClInclude>
-    <ClInclude Include="PlayerPredefine.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="Players\PlayerPredefine.h">
+      <Filter>Players</Filter>
     </ClInclude>
-    <ClInclude Include="ThreadUtils.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="Players\VideoPlayer.h">
+      <Filter>Players</Filter>
     </ClInclude>
-    <ClInclude Include="AudioAdapter.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="SDLUtils\SDLApp.h">
+      <Filter>SDLUtils</Filter>
     </ClInclude>
-    <ClInclude Include="RtAudioAdapter.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="SDLUtils\SDLMediaPlayer.h">
+      <Filter>SDLUtils</Filter>
     </ClInclude>
-    <ClInclude Include="OldVideoPlayer.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="Utils\AtomicWaitObject.h">
+      <Filter>Utils</Filter>
     </ClInclude>
-    <ClInclude Include="MediaPlayer.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="Utils\EnumDefine.h">
+      <Filter>Utils</Filter>
     </ClInclude>
-    <ClInclude Include="SDLMediaPlayer.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="Utils\MultiEnumTypeDefine.h">
+      <Filter>Utils</Filter>
     </ClInclude>
-    <ClInclude Include="AtomicWaitObject.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="Utils\ThreadUtils.h">
+      <Filter>Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="QtUIs\SDLWidget.h">
+      <Filter>QtUIs\SDLs</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <QtMoc Include="RoundedIconButton.h">
-      <Filter>Header Files</Filter>
+    <QtMoc Include="QtUIs\QtSDLFFmpegVideoPlayer.h">
+      <Filter>QtUIs</Filter>
     </QtMoc>
+    <QtMoc Include="QtUIs\RoundedIconButton.h">
+      <Filter>QtUIs</Filter>
+    </QtMoc>
+  </ItemGroup>
+  <ItemGroup>
+    <QtUic Include="QtUIs\QtSDLFFmpegVideoPlayer.ui">
+      <Filter>QtUIs\Form Files</Filter>
+    </QtUic>
   </ItemGroup>
 </Project>

@@ -24,6 +24,24 @@ std::string PlayerTypes::MediaEventType::name() const
 	return std::string{};
 }
 
+std::string PlayerTypes::PlayerStateEnum::getName(PlayerTypes::PlayerState value) {
+    switch (value)
+    {
+        EnumValueToStringCase(PlayerTypes::PlayerState, Stopped);
+        EnumValueToStringCase(PlayerTypes::PlayerState, Paused);
+        EnumValueToStringCase(PlayerTypes::PlayerState, Playing);
+        EnumValueToStringCase(PlayerTypes::PlayerState, Stopping);
+        EnumValueToStringCase(PlayerTypes::PlayerState, Preparing);
+        EnumValueToStringCase(PlayerTypes::PlayerState, Seeking);
+    default:
+        break;
+    }
+    return std::string{};
+}
+std::string PlayerTypes::PlayerStateEnum::name() const {
+    return getName(value());
+}
+
 void PlayerInterface::playbackStateChangeEventHandler(MediaPlaybackStateChangeEvent* e)
 {
     auto&& s = e->state();
@@ -46,10 +64,24 @@ void PlayerInterface::playbackStateChangeEventHandler(MediaPlaybackStateChangeEv
 void PlayerInterface::requestHandleEventHandler(MediaRequestHandleEvent* e)
 {
     std::string strHandleState;
-    if (e->handleState() == RequestHandleState::BeforeHandle)
+    switch (e->handleState())
+    {
+    case RequestHandleState::BeforeEnqueue:
+        strHandleState = "BeforeEnqueue";
+        break;
+    case RequestHandleState::AfterEnqueue:
+        strHandleState = "AfterEnqueue";
+        break;
+    case RequestHandleState::BeforeHandle:
         strHandleState = "BeforeHandle";
-    else
+        break;
+    case RequestHandleState::AfterHandle:
         strHandleState = "AfterHandle";
+        break;
+    default:
+        strHandleState = "Unknown"; // should not happen
+        break;
+    }
     if (e->requestType() == RequestTaskType::Seek)
     {
         auto&& se = static_cast<MediaSeekEvent*>(e);

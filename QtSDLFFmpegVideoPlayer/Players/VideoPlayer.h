@@ -14,6 +14,8 @@ public:
     // 低于下列值开始继续读取新的帧，取出新的值后<下列值开始通知读取线程
     static constexpr size_t MIN_VIDEO_PACKET_QUEUE_SIZE = 100; // 最小视频帧队列数量
 
+    static constexpr StreamTypes STREAM_TYPES = StreamType::STVideo;
+
 public:// 这个区域用于定义公共类型
     typedef std::any UserDataType;
     
@@ -56,22 +58,46 @@ public:// 这个区域用于定义公共类型
     // 返回值true && (sleepTime != 0)表示需要睡眠/丢帧，false || (sleepTime == 0)表示不需要
     using VideoClockSyncFunction = std::function<bool(const AtomicDouble& videoClock, const AtomicBool& isClockStable, const double& videoRealtimeClock, int64_t& sleepTime)>;
 
-
-
     struct VideoPlayOptions {
         StreamIndexSelector streamIndexSelector{ nullptr };
         VideoClockSyncFunction clockSyncFunction{ nullptr };
         VideoRenderFunction renderer{ nullptr };
         UserDataType rendererUserData{ UserDataType{} };
-        VideoFrameSwitchOptionsCallback frameSwitchCallback{ nullptr };
+        VideoFrameSwitchOptionsCallback frameSwitchOptionsCallback{ nullptr };
         UserDataType frameSwitchOptionsCallbackUserData{ UserDataType{} };
         bool enableHardwareDecoding{ false };
+
+        void mergeFrom(const VideoPlayOptions& other) {
+            if (other.streamIndexSelector) this->streamIndexSelector = other.streamIndexSelector;
+            if (other.clockSyncFunction) this->clockSyncFunction = other.clockSyncFunction;
+            if (other.renderer) this->renderer = other.renderer;
+            if (other.rendererUserData.has_value()) this->rendererUserData = other.rendererUserData;
+            if (other.frameSwitchOptionsCallback) this->frameSwitchOptionsCallback = other.frameSwitchOptionsCallback;
+            if (other.frameSwitchOptionsCallbackUserData.has_value()) this->frameSwitchOptionsCallbackUserData = other.frameSwitchOptionsCallbackUserData;
+            this->enableHardwareDecoding = other.enableHardwareDecoding;
+        }
     };
 
+    class VideoRenderEvent : public MediaEvent {
+        FrameContext* frameCtx{ nullptr };
+    public:
+        VideoRenderEvent(FrameContext* frameCtx)
+            : MediaEvent(MediaEventType::Render, StreamType::STVideo), frameCtx(frameCtx) {}
+        virtual FrameContext* frameContext() const {
+            return frameCtx;
+        }
+        virtual UniquePtrD<MediaEvent> clone() const override {
+            return std::make_unique<VideoRenderEvent>(*this);
+        }
+    };
 
 
 private:
     struct VideoPlaybackStateVariables { // 用于存储播放状态相关的数据
+        // 用于回调时获取所属播放器对象
+        VideoPlayer* owner{ nullptr };
+        VideoPlaybackStateVariables(VideoPlayer* o) : owner(o) {}
+
         ConcurrentQueue<AVPacket*> packetQueue;
         ConcurrentQueue<AVFrame*> frameQueue;
         // 
@@ -129,39 +155,44 @@ private:
         //    std::unique_lock lockMtxQueueRequestTasks(playbackStateVariables.mtxQueueRequestTasks); // 独占锁
         //    playbackStateVariables.queueRequestTasks.emplace(args); // 构造入队
         //}
-        void pushRequestTaskQueue(RequestTaskType type, std::function<void(MediaRequestHandleEvent* e, std::any userData)> handler, MediaRequestHandleEvent* event, std::any userData, std::vector<ThreadIdentifier> blockTargetThreadIds, RequestTaskProcessCallbacks callbacks) {
+        void pushRequestTaskQueue(RequestTaskType type, std::vector<ThreadIdentifier> blockTargetThreadIds, MediaRequestHandleEvent* event, std::function<void(MediaRequestHandleEvent* e, std::any userData)> handler, std::any userData = std::any{}) {
             std::unique_lock lockMtxQueueRequestTasks(mtxQueueRequestTasks); // 独占锁
-            queueRequestTasks.emplace(type, handler, event, userData, blockTargetThreadIds, callbacks); // 构造入队
+            auto&& beforeEnqueueEvent = event->clone(RequestHandleState::BeforeEnqueue);
+            owner->event(beforeEnqueueEvent.get()); // 触发入队前事件
+            if (beforeEnqueueEvent->isAccepted())
+            {
+                queueRequestTasks.emplace(type, handler, event, userData, blockTargetThreadIds); // 构造入队
+                auto&& afterEnqueueEvent = event->clone(RequestHandleState::AfterEnqueue);
+                owner->event(afterEnqueueEvent.get()); // 触发入队后事件
+            }
             // 记得通知处于等待的请求任务处理线程
             cvQueueRequestTasks.notify_all();
         }
         // 线程等待对象管理器
         ThreadStateManager threadStateManager;
     };
-    struct SeekData {
-        uint64_t pts{ 0 };
-        StreamIndexType streamIndex{ -1 };
-    };
+
     DefinePlayerLoggerSinks(loggerSinks, "VideoPlayer.class.log");
     Logger logger{ "VideoPlayer", loggerSinks };
 
     // 播放器状态
     AtomicStateMachine<PlayerState> playerState{ PlayerState::Stopped };
     AtomicWaitObject<bool> waitStopped{ false }; // true表示已停止，false表示未停止
-    VideoPlaybackStateVariables playbackStateVariables;
+    VideoPlaybackStateVariables playbackStateVariables{ this };
 
 public:
     VideoPlayer() : PlayerInterface(logger) {}
     ~VideoPlayer() {
         stop();
     }
+    // options会合并到已有的playOptions中，enableHardwareDecoding会被覆盖，其他选项如果非空则覆盖
     bool play(const std::string& filePath, VideoPlayOptions options) {
         if (!isStopped())
             return false;
         if (!trySetPlayerState(PlayerState::Preparing))
             return false;
         setFilePath(filePath);
-        playbackStateVariables.playOptions = options;
+        playbackStateVariables.playOptions.mergeFrom(options);
         return playVideoFile();
     }
     bool play() override {
@@ -215,18 +246,18 @@ public:
     }
 
     // \param streamIndex -1表示使用AV_TIME_BASE计算，否则使用streamIndex指定的流的time_base
-    void notifySeek(uint64_t pts, StreamIndexType streamIndex = -1, RequestTaskProcessCallbacks callbacks = RequestTaskProcessCallbacks{}) override {
+    void notifySeek(uint64_t pts, StreamIndexType streamIndex = -1) override {
         if (!isStopped() && playerState != PlayerState::Stopping)
         {
             // 提交seek任务
             auto seekHandler = std::bind(&VideoPlayer::requestTaskHandlerSeek, this, std::placeholders::_1, std::placeholders::_2);
             // 阻塞三个线程（即所有与读包解包相关的线程）
             auto&& blockThreadIds = { ThreadIdentifier::VideoReadingThread, ThreadIdentifier::VideoDecodingThread, ThreadIdentifier::VideoRenderingThread };
-            playbackStateVariables.pushRequestTaskQueue(RequestTaskType::Seek, seekHandler, new MediaSeekEvent{ pts, streamIndex }, SeekData{ pts, streamIndex }, blockThreadIds, callbacks);
+            playbackStateVariables.pushRequestTaskQueue(RequestTaskType::Seek, blockThreadIds, new MediaSeekEvent{ STREAM_TYPES, pts, streamIndex }, seekHandler);
         }
     }
-    void seek(uint64_t pts, StreamIndexType streamIndex = -1, RequestTaskProcessCallbacks callbacks = RequestTaskProcessCallbacks{}) override {
-        notifySeek(pts, streamIndex, callbacks);
+    void seek(uint64_t pts, StreamIndexType streamIndex = -1) override {
+        notifySeek(pts, streamIndex);
     }
 
     bool isPlaying() const override {
@@ -247,7 +278,7 @@ public:
         return playbackStateVariables.filePath;
     }
 
-    void setStreamIndexSelector(const StreamIndexSelector& selector) override {
+    void setStreamIndexSelector(const StreamIndexSelector& selector) {
         this->playbackStateVariables.playOptions.streamIndexSelector = selector;
     }
 
@@ -265,11 +296,23 @@ public:
     }
 
     void setFrameSwitchOptionsCallback(VideoFrameSwitchOptionsCallback callback, UserDataType userData) {
-        this->playbackStateVariables.playOptions.frameSwitchCallback = callback;
+        this->playbackStateVariables.playOptions.frameSwitchOptionsCallback = callback;
         this->playbackStateVariables.playOptions.frameSwitchOptionsCallbackUserData = userData;
     }
 
 protected:
+    virtual bool event(MediaEvent* e) override {
+        if (e->type() == MediaEventType::Render)
+        {
+            VideoRenderEvent* re = static_cast<VideoRenderEvent*>(e);
+            renderEvent(re);
+        }
+        return PlayerInterface::event(e);
+    }
+    // 渲染事件处理函数，子类可重写以实现自定义渲染逻辑
+    virtual void renderEvent(VideoRenderEvent* e) {
+
+    }
 
 private:
     void setPlayerState(PlayerState state) {
@@ -285,7 +328,7 @@ private:
     }
 
     void notifyPlaybackStateChangeHandler(PlayerState newState, PlayerState oldState) {
-        auto e = MediaPlaybackStateChangeEvent{ newState, oldState };
+        auto e = MediaPlaybackStateChangeEvent{ STREAM_TYPES, newState, oldState };
         event(&e);
     }
 

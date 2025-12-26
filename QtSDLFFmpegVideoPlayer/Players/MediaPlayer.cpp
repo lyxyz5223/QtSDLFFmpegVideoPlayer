@@ -33,3 +33,4 @@ MediaPlayer::StreamTypes MediaPlayer::findStreams(AVFormatContext* formatCtx)
     }
     return rst;
 }
+

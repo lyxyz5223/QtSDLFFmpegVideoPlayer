@@ -60,24 +60,34 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
-    <IncludePath>..\..\Libraries\ffmpeg-shared\include;..\..\Libraries\SDL3\include;..\..\Libraries\rtaudio-6.0.1;..\..\Libraries\portaudio-19.7.0\include;..\..\Libraries\Logger\include;..\..\Libraries\ConcurrentQueue;$(IncludePath)</IncludePath>
-    <LibraryPath>..\..\Libraries\ffmpeg-shared\lib;..\..\Libraries\SDL3\lib\x64;..\..\Libraries\rtaudio-6.0.1\build\Debug;..\..\Libraries\portaudio-19.7.0\build\msvc\x64\Debug;..\..\Libraries\Logger\build\Debugx64;$(LibraryPath)</LibraryPath>
+    <IncludePath>.\Utils;.\Players;.\SDLUtils;.\AudioAdapter;$(IncludePath)</IncludePath>
+    <LibraryPath>$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
+    <IncludePath>.\Utils;.\Players;.\SDLUtils;.\AudioAdapter;$(IncludePath)</IncludePath>
+    <LibraryPath>$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Link>
       <AdditionalDependencies>SDL3.lib;avcodec.lib;avdevice.lib;avfilter.lib;avformat.lib;avutil.lib;swresample.lib;swscale.lib;rtaudiod.lib;portaudio_x64.lib;Logger_d.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>..\..\Libraries\ffmpeg-shared\lib;..\..\Libraries\SDL3\lib\x64;..\..\Libraries\rtaudio-6.0.1\build\Debug;..\..\Libraries\portaudio-19.7.0\build\msvc\x64\Debug;..\..\Libraries\Logger\build\Debugx64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <ClCompile>
-      <PreprocessorDefinitions>HAVE_RTAUDIO;HAVE_PORTAUDIO;DONOT_USE_STD_FORMAT;USE_STD_FORMAT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>HAVE_RTAUDIO;HAVE_PORTAUDIO;USE_STD_FORMAT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>..\..\Libraries\ffmpeg-shared\include;..\..\Libraries\SDL3\include;..\..\Libraries\rtaudio-6.0.1;..\..\Libraries\portaudio-19.7.0\include;..\..\Libraries\Logger\include;..\..\Libraries\ConcurrentQueue;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <LanguageStandard>$(Qt_STDCPP_)</LanguageStandard>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>..\..\Libraries\ffmpeg-shared\include;..\..\Libraries\SDL3\include;..\..\Libraries\rtaudio-6.0.1;..\..\Libraries\portaudio-19.7.0\include;..\..\Libraries\Logger\include;..\..\Libraries\ConcurrentQueue;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_RTAUDIO;HAVE_PORTAUDIO;USE_STD_FORMAT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <Link>
+      <AdditionalDependencies>SDL3.lib;avcodec.lib;avdevice.lib;avfilter.lib;avformat.lib;avutil.lib;swresample.lib;swscale.lib;rtaudio.lib;portaudio_x64.lib;Logger.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>..\..\Libraries\ffmpeg-shared\lib;..\..\Libraries\SDL3\lib\x64;..\..\Libraries\rtaudio-6.0.1\build\Release;..\..\Libraries\portaudio-19.7.0\build\msvc\x64\Release;..\..\Libraries\Logger\build\Releasex64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="Configuration">
     <ClCompile>
@@ -101,48 +111,48 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
     </ClCompile>
     <Link>
-      <SubSystem>Windows</SubSystem>
+      <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>false</GenerateDebugInformation>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="AudioAdapter.cpp" />
-    <ClCompile Include="AudioPlayer.cpp" />
-    <ClCompile Include="EnumDefine.h" />
-    <ClCompile Include="MediaPlayer.cpp" />
-    <ClCompile Include="PlayerPredefine.cpp" />
-    <ClCompile Include="PortAudioAdapter.h" />
-    <ClCompile Include="RoundedIconButton.cpp" />
-    <ClCompile Include="SDLApp.cpp" />
-    <ClCompile Include="SDLMediaPlayer.cpp" />
-    <ClCompile Include="SDLWidget.cpp" />
-    <ClCompile Include="OldVideoPlayer.cpp" />
-    <ClCompile Include="VideoPlayer.cpp" />
+    <ClCompile Include="Players\AudioPlayer.cpp" />
+    <ClCompile Include="Players\MediaPlayer.cpp" />
+    <ClCompile Include="Players\PlayerPredefine.cpp" />
+    <ClCompile Include="Players\VideoPlayer.cpp" />
+    <ClCompile Include="QtUIs\QtSDLFFmpegVideoPlayer.cpp" />
+    <ClCompile Include="QtUIs\RoundedIconButton.cpp" />
+    <ClCompile Include="QtUIs\SDLWidget.cpp" />
+    <ClCompile Include="SDLUtils\SDLApp.cpp" />
+    <ClCompile Include="SDLUtils\SDLMediaPlayer.cpp" />
     <QtRcc Include="QtSDLFFmpegVideoPlayer.qrc" />
-    <QtUic Include="QtSDLFFmpegVideoPlayer.ui" />
-    <QtMoc Include="QtSDLFFmpegVideoPlayer.h" />
-    <ClCompile Include="QtSDLFFmpegVideoPlayer.cpp" />
+    <ClCompile Include="AudioAdapter\AudioAdapter.cpp" />
     <ClCompile Include="main.cpp" />
     <None Include="QtSDLFFmpegVideoPlayer.ico" />
     <ResourceCompile Include="QtSDLFFmpegVideoPlayer.rc" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="AtomicWaitObject.h" />
-    <ClInclude Include="AudioAdapter.h" />
-    <ClInclude Include="AudioPlayer.h" />
-    <ClInclude Include="MediaPlayer.h" />
-    <ClInclude Include="MultiEnumTypeDefine.h" />
-    <ClInclude Include="PlayerPredefine.h" />
-    <QtMoc Include="RoundedIconButton.h" />
-    <ClInclude Include="RtAudioAdapter.h" />
-    <ClInclude Include="SDLApp.h" />
-    <ClInclude Include="SDLMediaPlayer.h" />
-    <ClInclude Include="SDLWidget.h" />
-    <ClInclude Include="ThreadUtils.h" />
-    <ClInclude Include="OldVideoPlayer.h" />
-    <ClInclude Include="VideoPlayer.h" />
+    <ClInclude Include="AudioAdapter\AudioAdapter.h" />
+    <ClInclude Include="AudioAdapter\PortAudioAdapter.h" />
+    <ClInclude Include="AudioAdapter\RtAudioAdapter.h" />
+    <ClInclude Include="Players\AudioPlayer.h" />
+    <ClInclude Include="Players\MediaPlayer.h" />
+    <ClInclude Include="Players\PlayerPredefine.h" />
+    <ClInclude Include="Players\VideoPlayer.h" />
+    <ClInclude Include="QtUIs\SDLWidget.h" />
+    <ClInclude Include="SDLUtils\SDLApp.h" />
+    <ClInclude Include="SDLUtils\SDLMediaPlayer.h" />
+    <ClInclude Include="Utils\AtomicWaitObject.h" />
+    <ClInclude Include="Utils\EnumDefine.h" />
+    <ClInclude Include="Utils\MultiEnumTypeDefine.h" />
+    <ClInclude Include="Utils\ThreadUtils.h" />
+    <QtMoc Include="QtUIs\RoundedIconButton.h" />
+    <QtMoc Include="QtUIs\QtSDLFFmpegVideoPlayer.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <QtUic Include="QtUIs\QtSDLFFmpegVideoPlayer.ui" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Condition="Exists('$(QtMsBuild)\qt.targets')">

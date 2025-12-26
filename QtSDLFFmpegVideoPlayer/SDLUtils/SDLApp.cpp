@@ -1,7 +1,4 @@
 #include "SDLApp.h"
-#include "VideoPlayer.h"
-#include "SDLVideoPlayer.h"
-
 
 std::mutex SDLApp::m_mutexInstance;
 SDLApp* SDLApp::m_instance = nullptr;
@@ -74,55 +71,11 @@ SDLApp::EventHandlerResult SDLApp::AppEventHandler(const SDL_Event& event)
     case SDL_EVENT_KEY_DOWN:
     {
         SDL_Log("Key down: scancode=%d, keycode=%d\n", event.key.scancode, event.key.key);
-        //if (event.key.key == SDLK_ESCAPE) {
-        //    SDL_Log("Escape key pressed, exiting the application...\n");
-        //    result.appExit = true;
-        //}
         break;
     }
     case SDL_EVENT_KEY_UP:
     {
         SDL_Log("Key up: scancode=%d, keycode=%d\n", event.key.scancode, event.key.key);
-        //if (event.key.key == SDLK_SPACE || event.key.key == SDLK_KP_ENTER)
-        //{
-        //    struct ShowOpenFileDialogUserData {
-        //        SDLApp* app = nullptr;
-        //        SDL_WindowID winId = 0;
-        //    } *showOpenFileDialogUserData = new ShowOpenFileDialogUserData{
-        //        this,
-        //        event.key.windowID
-        //    };
-        //    const SDL_DialogFileFilter filters[] = {
-        //        { "Video files",   "mp4;mkv;flv;f4v;webm;m4v;mov;3gp;3g2;rm;rmvb;wmv;avi;asf;mpeg;mpg;mpe;ts;div;dv;divx;dat" },
-        //        { "All files",   "*" }
-        //    };
-        //    SDL_ShowOpenFileDialog([](void* userdata, const char* const* filelist, int filter) {
-        //        ShowOpenFileDialogUserData* pUserData = static_cast<ShowOpenFileDialogUserData*>(userdata);
-        //        SDLApp* app = pUserData->app;
-        //        if (!filelist || filelist[0] == nullptr)
-        //        {
-        //            SDL_Log("未选择任何文件。\n");
-        //            return;
-        //        }
-        //        std::string file = filelist[0];
-        //        SDL_Log((std::string("选中的文件：") + file).c_str());
-        //        auto lambda = [=](void* userData, SDL_WindowID winId) {
-        //            std::string a = std::to_string(winId);
-        //            SDL_Log("开始播放视频文件: %s, 窗口id: %s", file.c_str(), a.c_str());
-        //            static bool isPlaying = false;
-        //            if (!isPlaying)
-        //            {
-        //                SDLVideoPlayer vp;
-        //                isPlaying = true;
-        //                vp.enableHardwareDecoding(true);
-        //                vp.playVideoWithAudio(file, winId, true);
-        //                isPlaying = false;
-        //            }
-        //            };
-        //        lambda(0, pUserData->winId);
-        //        delete pUserData;
-        //        }, showOpenFileDialogUserData, SDL_GetWindowFromID(event.key.windowID), filters, 2, NULL, false);
-        //}
         break;
     }
     default:

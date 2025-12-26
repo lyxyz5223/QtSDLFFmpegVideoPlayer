@@ -21,7 +21,8 @@ QtSDLFFmpegVideoPlayer::QtSDLFFmpegVideoPlayer(QWidget* parent)
     ui.actionQuit->connect(ui.actionQuit, &QAction::triggered, [&]() {
         this->close();
         });
-
+    //mediaPlayer.setRenderEventCallback(std::bind(&QtSDLFFmpegVideoPlayer::renderCallback, this, std::placeholders::_1, std::placeholders::_2), MediaPlayer::VideoUserDataType{});
+    //mediaPlayer.setStartEventCallback(std::bind(&QtSDLFFmpegVideoPlayer::beforePlaybackCallback, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3), MediaPlayer::VideoUserDataType{});
 }
 
 QtSDLFFmpegVideoPlayer::~QtSDLFFmpegVideoPlayer()
@@ -63,21 +64,13 @@ void QtSDLFFmpegVideoPlayer::selectFileAndPlay()
 {
     // 打开文件对话框
     QString fileName = QFileDialog::getOpenFileName(this, tr("Open Video File"), "", tr("Video Files (*.mp4 *.avi *.mkv *.mov *.flv *.wmv *.mp3);;All Files (*)"));
-    if (!fileName.isEmpty())
-    {
-        std::thread([this, fileName]() {
-            mediaPlayer.stop();
-            mediaPlayer.playVideoWithAudio(fileName.toStdString(), SDLApp::getWindowId(sdlWidget->getSDLWindow()),
-                [&](const MediaPlayer::VideoFrameContext& frameCtx, MediaPlayer::VideoUserDataType userData) {
-                    this->renderCallback(frameCtx, userData);
-                }, VideoPlayer::UserDataType{}, [&](const AVFormatContext* formatCtx, const AVCodecContext* videoCodecCtx, MediaPlayer::VideoUserDataType userData) {
-                    this->beforePlaybackCallback(formatCtx, videoCodecCtx, userData);
-                }, VideoPlayer::UserDataType{}, [&](MediaPlayer::VideoUserDataType userData) {
-                    this->afterPlaybackCallback(userData);
-                }, VideoPlayer::UserDataType{});
-            qDebug() << "Video Playback Finished";
-            }).detach();
-    }
+    if (fileName.isEmpty())
+        return;
+    std::thread([this, fileName]() {
+        mediaPlayer.stop();
+        mediaPlayer.play(fileName.toStdString(), SDLApp::getWindowId(sdlWidget->getSDLWindow()));
+        qDebug() << "Video Playback Finished";
+        }).detach();
 }
 
 void QtSDLFFmpegVideoPlayer::mediaPlayPause()
@@ -146,16 +139,8 @@ void QtSDLFFmpegVideoPlayer::mediaSliderValueChanged(int value)
     qDebug() << "Slider value changed to:" << value;
 }
 
-void QtSDLFFmpegVideoPlayer::beforePlaybackCallback(const AVFormatContext* formatCtx, const AVCodecContext* videoCodecCtx, VideoPlayer::UserDataType userData)
+void QtSDLFFmpegVideoPlayer::beforePlaybackCallback(const AVFormatContext* formatCtx, const AVCodecContext* videoCodecCtx)
 {
-    //if (videoCodecCtxMap.count(videoStreamIndex))
-    //{
-    //    auto& codecCtx = videoCodecCtxMap.at(videoStreamIndex);
-    //}
-    //else if (audioCodecCtxMap.count(audioStreamIndex))
-    //{
-    //    auto& codecCtx = audioCodecCtxMap.at(audioStreamIndex);
-    //}
     this->videoDuration = formatCtx->duration;
     ui.sliderMediaProgress->setRange(0, static_cast<int>(this->videoDuration / AV_TIME_BASE));
     qDebug() << "Video Duration (s):" << this->videoDuration / AV_TIME_BASE;
@@ -165,7 +150,7 @@ void QtSDLFFmpegVideoPlayer::beforePlaybackCallback(const AVFormatContext* forma
     ui.btnPlayPause->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::MediaPlaybackPause));
 }
 
-void QtSDLFFmpegVideoPlayer::renderCallback(const MediaPlayer::VideoFrameContext& frameCtx, MediaPlayer::VideoUserDataType userData)
+void QtSDLFFmpegVideoPlayer::renderCallback(const MediaPlayer::VideoFrameContext& frameCtx)
 {
     // 更新进度条
     if (!isMediaSliderMoving)
@@ -175,7 +160,7 @@ void QtSDLFFmpegVideoPlayer::renderCallback(const MediaPlayer::VideoFrameContext
     }
 }
 
-void QtSDLFFmpegVideoPlayer::afterPlaybackCallback(VideoPlayer::UserDataType userData)
+void QtSDLFFmpegVideoPlayer::afterPlaybackCallback()
 {
     // 播放结束
     ui.sliderMediaProgress->setValue(ui.sliderMediaProgress->minimum());

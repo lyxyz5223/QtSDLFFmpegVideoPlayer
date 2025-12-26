@@ -16,7 +16,7 @@ public:
         value = other.value;
         return *this;
     }
-    constexpr  MultiEnumTypeDefine& operator=(T v) {
+    constexpr MultiEnumTypeDefine& operator=(T v) {
         value = v;
         return *this;
     }

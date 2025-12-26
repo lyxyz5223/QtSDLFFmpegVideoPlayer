@@ -193,7 +193,7 @@ void VideoPlayer::renderVideo()
     //auto& switchFormat = playbackStateVariables.playOptions.frameSwitchOptions.format;
     //auto& newSize = playbackStateVariables.playOptions.frameSwitchOptions.size;
     //auto& enableFrameFormatSwitch = playbackStateVariables.playOptions.frameSwitchOptions.enabled;
-    auto& frameSwitchCallback = playbackStateVariables.playOptions.frameSwitchCallback;
+    auto& frameSwitchOptionsCallback = playbackStateVariables.playOptions.frameSwitchOptionsCallback;
     auto& frameSwitchOptionsCallbackUserData = playbackStateVariables.playOptions.frameSwitchOptionsCallbackUserData;
     auto& renderer = playbackStateVariables.playOptions.renderer;
     auto& rendererUserData = playbackStateVariables.playOptions.rendererUserData;
@@ -314,7 +314,7 @@ void VideoPlayer::renderVideo()
 
         // 调用回调获取帧格式转换选项
         VideoFrameSwitchOptions switchOptions;
-        frameSwitchCallback(switchOptions, frameCtx, frameSwitchOptionsCallbackUserData);
+        frameSwitchOptionsCallback(switchOptions, frameCtx, frameSwitchOptionsCallbackUserData);
         // 转换后的大小：
         //SizeI scaleSize = switchOptions.size.isValid() ? switchOptions.size : SizeI(codecSize.width(), codecSize.height());
         SizeI scaleSize = switchOptions.size;
@@ -458,6 +458,8 @@ void VideoPlayer::renderVideo()
         // 渲染视频帧
         if (renderer)
             renderer(frameCtx, rendererUserData);
+        VideoRenderEvent videoRenderEvent{ &frameCtx };
+        event(&videoRenderEvent);
     }
 }
 
@@ -571,49 +573,35 @@ void VideoPlayer::requestTaskProcessor()
         if (shouldExit())
             break;
         // 处理任务
-        RequestTaskItem& taskItem = queueRequestTasks.front();
+        RequestTaskItem taskItem = queueRequestTasks.front();
+        queueRequestTasks.pop(); // 先弹出任务
+        // 构造智能指针，自动释放事件对象内存
+        UniquePtrD<MediaRequestHandleEvent> smartEvent{ taskItem.event };
         lockMtxQueueRequestTasks.unlock();
         // 通知需要等待的线程
-        //std::vector<std::thread> notifiedThreads;
         std::vector<ThreadStateManager::ThreadStateController> waitObjs;
         for (const auto& threadId : taskItem.blockTargetThreadIds)
         {
-            //notifiedThreads.emplace_back([threadId, &threadStateManager, &waitObjs, this] {
                 try {
                     auto && tsc = threadStateManager.get(threadId);
                     waitObjs.push_back(tsc);
                     tsc.disableWakeUp();
-                    tsc.setBlockedAndWaitChanged(true);
+                    tsc.setBlockedAndWaitChanged(true); // 等待线程阻塞
                 }
                 catch (std::exception e) {
                     logger.error("{}", e.what());
                 }
-                //});
         }
-        // 等待所有需要等待的线程暂停
-        //for (auto& t : notifiedThreads)
-        //    if (t.joinable())
-        //        t.join();
         // 执行任务处理函数
         auto&& requestBeforeHandleEvent = taskItem.event->clone(RequestHandleState::BeforeHandle);
-        auto&& requestAfterHandleEvent = taskItem.event->clone(RequestHandleState::AfterHandle);
         event(requestBeforeHandleEvent.get());
         if (requestBeforeHandleEvent->isAccepted()) // 只有被接受的任务才处理
         {
-            if (taskItem.callbacks.beforeProcess)
-                taskItem.callbacks.beforeProcess(taskItem);
             if (taskItem.handler)
                 taskItem.handler(taskItem.event, taskItem.userData);
-            if (taskItem.callbacks.afterProcess)
-                taskItem.callbacks.afterProcess(taskItem);
+            auto&& requestAfterHandleEvent = taskItem.event->clone(RequestHandleState::AfterHandle);
             event(requestAfterHandleEvent.get());
         }
-        // 清理内存
-        delete taskItem.event;
-        // 移除已处理的任务
-        lockMtxQueueRequestTasks.lock();
-        queueRequestTasks.pop();
-        lockMtxQueueRequestTasks.unlock();
         // 通知所有暂停的线程继续运行
         for (auto& waitObj : waitObjs)
         {
@@ -628,9 +616,9 @@ void VideoPlayer::requestTaskHandlerSeek(MediaRequestHandleEvent* e, std::any us
     // 先将播放器状态调整至非播放中状态
     setPlayerState(PlayerState::Seeking);
     // 此时已经所有相关线程均已暂停
-    SeekData seekData = std::any_cast<SeekData>(userData);
-    uint64_t pts = seekData.pts;
-    StreamIndexType streamIndex = seekData.streamIndex;
+    auto* seekEvent = static_cast<MediaSeekEvent*>(e);
+    uint64_t pts = seekEvent->timestamp();
+    StreamIndexType streamIndex = seekEvent->streamIndex();
     //int rst = avformat_seek_file(playbackStateVariables.formatCtx.get(), streamIndex, INT64_MIN, pts, INT64_MAX, 0);
     //if (rst < 0) // 寻找失败
     //{

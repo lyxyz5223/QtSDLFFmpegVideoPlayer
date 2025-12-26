@@ -2,7 +2,7 @@
 #include "PlayerPredefine.h"
 
 // 音频库
-#include "AudioAdapter.h"
+#include <AudioAdapter.h>
 
 class AudioPlayer : public PlayerInterface, private ConcurrentQueueOps
 {
@@ -22,13 +22,46 @@ public:
     // 统一音频转换后用于播放的格式
     static constexpr AVSampleFormat AUDIO_OUTPUT_FORMAT = AVSampleFormat::AV_SAMPLE_FMT_S16;
 
-    using AudioClockSyncFunction = std::function<bool(const AtomicDouble& audioClock, const AtomicBool& isClockStable, const double& audioRealtimeClock, int64_t& sleepTime)>;
+    static constexpr StreamTypes STREAM_TYPES = StreamType::STAudio;
+
 
 public:
+    using AudioClockSyncFunction = std::function<bool(const AtomicDouble& audioClock, const AtomicBool& isClockStable, const double& audioRealtimeClock, int64_t& sleepTime)>;
+
     struct AudioPlayOptions {
         StreamIndexSelector streamIndexSelector{ nullptr };
         AudioClockSyncFunction clockSyncFunction{ nullptr }; // Reserved for future use
+
+        void mergeFrom(const AudioPlayOptions& other) {
+            if (other.streamIndexSelector) streamIndexSelector = other.streamIndexSelector;
+            if (other.clockSyncFunction) clockSyncFunction = other.clockSyncFunction;
+        }
     };
+
+    struct FrameContext {
+        std::span<uint8_t> data;// { nullptr }; // 指向音频数据缓冲区的指针
+        int dataSize{ 0 }; // 数据大小，单位字节
+        unsigned int nFrames{ 0 }; // 音频帧数
+        int sampleRate{ 0 }; // 采样率
+        int numberOfChannels{ 0 }; // 通道数
+        double pts{ 0.0 }; // pts，单位s
+        double streamTime{ 0.0 }; // 流时间，单位s
+    };
+
+    class AudioRenderEvent : public MediaEvent {
+        FrameContext* frameCtx{ nullptr };
+    public:
+        AudioRenderEvent(FrameContext* frameCtx)
+            : MediaEvent(MediaEventType::Render, StreamType::STAudio), frameCtx(frameCtx) {}
+        virtual FrameContext* frameContext() const {
+            return frameCtx;
+        }
+        virtual UniquePtrD<MediaEvent> clone() const override {
+            return std::make_unique<AudioRenderEvent>(*this);
+        }
+    };
+
+
 private:
     struct AudioStreamInfo {
         std::vector<uint8_t> dataBytes{}; // 如果是uint16_t格式的数据，nFrames表示播放缓冲区大小（在音频播放回调中使用），则dataBytes.size()应该是numberOfAudioOutputChannels * sizeof(uint16_t) * nFrames
@@ -38,6 +71,10 @@ private:
     };
 
     struct AudioPlaybackStateVariables { // 用于存储播放状态相关的数据
+        // 用于回调时获取所属播放器对象
+        AudioPlayer* owner{ nullptr };
+        AudioPlaybackStateVariables(AudioPlayer* o) : owner(o) {}
+
         // 音频输出与设备
         UniquePtrD<AudioAdapter> audioDevice;
         AtomicInt numberOfAudioOutputChannels = DEFAULT_NUMBER_CHANNELS_AUDIO_OUTPUT;
@@ -45,6 +82,8 @@ private:
         Queue<AudioStreamInfo> streamQueue;
         ConcurrentQueue<AVPacket*> packetQueue;
         AtomicBool streamUploadFinished{ false };
+        //// 每次渲染音频修改的上下文
+        //FrameContext renderFrameContext;
 
         // 
         StreamIndexType streamIndex{ -1 };
@@ -101,16 +140,19 @@ private:
             threadStateManager.reset();
         }
 
-        void pushRequestTaskQueue(RequestTaskType type, std::function<void(MediaRequestHandleEvent* e, std::any userData)> handler, MediaRequestHandleEvent* event, std::any userData, std::vector<ThreadIdentifier> blockTargetThreadIds, RequestTaskProcessCallbacks callbacks) {
+        void pushRequestTaskQueue(RequestTaskType type, std::vector<ThreadIdentifier> blockTargetThreadIds, MediaRequestHandleEvent* event, std::function<void(MediaRequestHandleEvent* e, std::any userData)> handler, std::any userData = std::any{}) {
             std::unique_lock lockMtxQueueRequestTasks(mtxQueueRequestTasks); // 独占锁
-            queueRequestTasks.emplace(type, handler, event, userData, blockTargetThreadIds, callbacks); // 构造入队
+            auto&& beforeEnqueueEvent = event->clone(RequestHandleState::BeforeEnqueue);
+            owner->event(beforeEnqueueEvent.get()); // 触发入队前事件
+            if (beforeEnqueueEvent->isAccepted())
+            {
+                queueRequestTasks.emplace(type, handler, event, userData, blockTargetThreadIds); // 构造入队
+                auto&& afterEnqueueEvent = event->clone(RequestHandleState::AfterEnqueue);
+                owner->event(afterEnqueueEvent.get()); // 触发入队后事件
+            }
             // 记得通知处于等待的请求任务处理线程
             cvQueueRequestTasks.notify_all();
         }
-    };
-    struct SeekData {
-        uint64_t pts{ 0 };
-        StreamIndexType streamIndex{ -1 };
     };
 
     // 日志记录器
@@ -120,21 +162,21 @@ private:
     // 播放器状态
     Atomic<PlayerState> playerState{ PlayerState::Stopped };
     AtomicWaitObject<bool> waitStopped{ false }; // true表示已停止，false表示未停止
-    AudioPlaybackStateVariables playbackStateVariables;
+    AudioPlaybackStateVariables playbackStateVariables{ this };
 
 public:
     AudioPlayer() : PlayerInterface(logger) {}
     ~AudioPlayer() {
         stop();
     }
-
+    // options如果非空则覆盖之前的选项
     bool play(const std::string& filePath, const AudioPlayOptions& options) {
         if (!isStopped())
             return false;
         if (!trySetPlayerState(PlayerState::Preparing))
             return false;
         setFilePath(filePath);
-        playbackStateVariables.playOptions = options;
+        playbackStateVariables.playOptions.mergeFrom(options);
         return playAudioFile();
     }
     bool play() override {
@@ -183,18 +225,18 @@ public:
     }
 
     // \param streamIndex -1表示使用AV_TIME_BASE计算，否则使用streamIndex指定的流的time_base
-    void notifySeek(uint64_t pts, StreamIndexType streamIndex = -1, RequestTaskProcessCallbacks callbacks = RequestTaskProcessCallbacks{}) override {
+    void notifySeek(uint64_t pts, StreamIndexType streamIndex = -1) override {
         if (!isStopped() && playerState != PlayerState::Stopping)
         {
             // 提交seek任务
             auto seekHandler = std::bind(&AudioPlayer::requestTaskHandlerSeek, this, std::placeholders::_1, std::placeholders::_2);
             // 阻塞三个线程（即所有与读包解包相关的线程）
             auto&& blockThreadIds = { ThreadIdentifier::AudioReadingThread, ThreadIdentifier::AudioDecodingThread, ThreadIdentifier::AudioPlayingThread };
-            playbackStateVariables.pushRequestTaskQueue(RequestTaskType::Seek, seekHandler, new MediaSeekEvent{ pts, streamIndex }, SeekData{ pts, streamIndex }, blockThreadIds, callbacks);
+            playbackStateVariables.pushRequestTaskQueue(RequestTaskType::Seek, blockThreadIds, new MediaSeekEvent{ STREAM_TYPES, pts, streamIndex }, seekHandler);
         }
     }
-    void seek(uint64_t pts, StreamIndexType streamIndex = -1, RequestTaskProcessCallbacks callbacks = RequestTaskProcessCallbacks{}) override {
-        notifySeek(pts, streamIndex, callbacks);
+    void seek(uint64_t pts, StreamIndexType streamIndex = -1) override {
+        notifySeek(pts, streamIndex);
     }
 
     bool isPlaying() const override {
@@ -215,13 +257,28 @@ public:
         return playbackStateVariables.filePath;
     }
     
-    void setStreamIndexSelector(const StreamIndexSelector& selector) override {
+    void setStreamIndexSelector(const StreamIndexSelector& selector) {
         this->playbackStateVariables.playOptions.streamIndexSelector = selector;
     }
 
     void setClockSyncFunction(const AudioClockSyncFunction& func) {
         this->playbackStateVariables.playOptions.clockSyncFunction = func;
     }
+
+protected:
+    virtual bool event(MediaEvent* e) override {
+        if (e->type() == MediaEventType::Render)
+        {
+            AudioRenderEvent* re = static_cast<AudioRenderEvent*>(e);
+            renderEvent(re);
+        }
+        return PlayerInterface::event(e);
+    }
+    // 渲染事件处理函数，子类可重写以实现自定义渲染逻辑
+    virtual void renderEvent(AudioRenderEvent* e) {
+
+    }
+
 
 private:
     void setPlayerState(PlayerState state) {
@@ -237,7 +294,7 @@ private:
     }
 
     void notifyPlaybackStateChangeHandler(PlayerState newState, PlayerState oldState) {
-        auto e = MediaPlaybackStateChangeEvent{ newState, oldState };
+        auto e = MediaPlaybackStateChangeEvent{ STREAM_TYPES, newState, oldState };
         event(&e);
     }
 

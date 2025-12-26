@@ -1,5 +1,5 @@
 #pragma once
-#include "VideoPlayer.h"
+#include <VideoPlayer.h>
 #include <string>
 #include <SDL3/SDL.h>
 
