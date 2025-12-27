@@ -39,12 +39,17 @@ public:
     };
 
     struct FrameContext {
+        AVFormatContext* formatCtx{ nullptr }; // 所属格式上下文
+        AVCodecContext* codecCtx{ nullptr }; // 所属编解码上下文
+        StreamIndexType streamIndex{ -1 }; // 所属流索引
         std::span<uint8_t> data;// { nullptr }; // 指向音频数据缓冲区的指针
         int dataSize{ 0 }; // 数据大小，单位字节
         unsigned int nFrames{ 0 }; // 音频帧数
         int sampleRate{ 0 }; // 采样率
         int numberOfChannels{ 0 }; // 通道数
-        double pts{ 0.0 }; // pts，单位s
+        uint64_t pts{ 0 }; // Presentation Time Stamp
+        AVRational timeBase{ 1, AV_TIME_BASE }; // 时间基，也可以从formatCtx->streams[streamIndex]->time_base获取
+        double frameTime{ 0.0 }; // 帧对应的时间，单位s
         double streamTime{ 0.0 }; // 流时间，单位s
     };
 
@@ -67,7 +72,9 @@ private:
         std::vector<uint8_t> dataBytes{}; // 如果是uint16_t格式的数据，nFrames表示播放缓冲区大小（在音频播放回调中使用），则dataBytes.size()应该是numberOfAudioOutputChannels * sizeof(uint16_t) * nFrames
         //std::span<uint8_t> dataBytes{}; // 如果是uint16_t格式的数据，nFrames表示播放缓冲区大小（在音频播放回调中使用），则dataBytes.size()应该是numberOfAudioOutputChannels * sizeof(uint16_t) * nFrames
         //std::vector<uint8_t> dataBytes{}; // 如果是uint16_t格式的数据，则dataBytes.size()应该是numberOfAudioOutputChannels * sizeof(uint16_t)
-        double pts = 0.0; // 单位s
+        uint64_t pts{ 0 }; // Presentation Time Stamp
+        AVRational timeBase{ 1, AV_TIME_BASE }; // 时间基
+        double frameTime{ 0.0 }; // 帧对应的时间，单位s
     };
 
     struct AudioPlaybackStateVariables { // 用于存储播放状态相关的数据

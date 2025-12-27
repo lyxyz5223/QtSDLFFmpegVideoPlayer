@@ -127,11 +127,8 @@
     <ClCompile Include="QtUIs\SDLWidget.cpp" />
     <ClCompile Include="SDLUtils\SDLApp.cpp" />
     <ClCompile Include="SDLUtils\SDLMediaPlayer.cpp" />
-    <QtRcc Include="QtSDLFFmpegVideoPlayer.qrc" />
     <ClCompile Include="AudioAdapter\AudioAdapter.cpp" />
     <ClCompile Include="main.cpp" />
-    <None Include="QtSDLFFmpegVideoPlayer.ico" />
-    <ResourceCompile Include="QtSDLFFmpegVideoPlayer.rc" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="AudioAdapter\AudioAdapter.h" />
@@ -153,6 +150,15 @@
   </ItemGroup>
   <ItemGroup>
     <QtUic Include="QtUIs\QtSDLFFmpegVideoPlayer.ui" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="resources\QtSDLFFmpegVideoPlayer.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <QtRcc Include="resources\QtSDLFFmpegVideoPlayer.qrc" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="resources\QtSDLFFmpegVideoPlayer.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Condition="Exists('$(QtMsBuild)\qt.targets')">

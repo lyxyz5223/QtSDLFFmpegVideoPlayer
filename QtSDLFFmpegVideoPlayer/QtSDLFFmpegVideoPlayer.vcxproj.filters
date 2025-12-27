@@ -41,17 +41,6 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <QtRcc Include="QtSDLFFmpegVideoPlayer.qrc">
-      <Filter>Resource Files</Filter>
-    </QtRcc>
-    <None Include="QtSDLFFmpegVideoPlayer.ico">
-      <Filter>Resource Files</Filter>
-    </None>
-    <ResourceCompile Include="QtSDLFFmpegVideoPlayer.rc">
-      <Filter>Resource Files</Filter>
-    </ResourceCompile>
-  </ItemGroup>
-  <ItemGroup>
     <ClCompile Include="main.cpp">
       <Filter>1Source Files</Filter>
     </ClCompile>
@@ -142,5 +131,20 @@
     <QtUic Include="QtUIs\QtSDLFFmpegVideoPlayer.ui">
       <Filter>QtUIs\Form Files</Filter>
     </QtUic>
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="resources\QtSDLFFmpegVideoPlayer.ico">
+      <Filter>Resource Files</Filter>
+    </Image>
+  </ItemGroup>
+  <ItemGroup>
+    <QtRcc Include="resources\QtSDLFFmpegVideoPlayer.qrc">
+      <Filter>Resource Files</Filter>
+    </QtRcc>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="resources\QtSDLFFmpegVideoPlayer.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
   </ItemGroup>
 </Project>

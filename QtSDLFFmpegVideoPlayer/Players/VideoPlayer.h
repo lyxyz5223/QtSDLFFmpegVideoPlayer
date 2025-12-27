@@ -108,6 +108,7 @@ private:
         AVPixelFormat hwPixelFormat{ AV_PIX_FMT_NONE };
         // 时钟
         AtomicDouble videoClock{ 0.0 }; // 单位s
+        AtomicBool isVideoClockStable{ false }; // 时钟是否稳定
 
         // 系统时钟
         double realtimeClock = 0;

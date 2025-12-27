@@ -278,7 +278,8 @@ void AudioPlayer::packet2AudioStreams()
     auto&& waitObj = threadStateManager.addThread(ThreadIdentifier::AudioDecodingThread);
     ThreadStateManager::AutoRemovedThreadObj autoRemoveWaitObj{ threadStateManager, waitObj };
 
-    double timeBase = av_q2d(playbackStateVariables.formatCtx->streams[playbackStateVariables.streamIndex]->time_base);
+    AVRational timeBaseRational = playbackStateVariables.formatCtx->streams[playbackStateVariables.streamIndex]->time_base;
+    double timeBase = av_q2d(timeBaseRational);
     AVFrame* frame = av_frame_alloc();
     //int64_t startTime = 0;
     //bool started = false;
@@ -394,7 +395,7 @@ void AudioPlayer::packet2AudioStreams()
             //    //enqueue(streamQueue, one);
             //    playbackStateVariables.streamQueue.emplace(one);
             //}
-            playbackStateVariables.streamQueue.emplace(std::move(vecAudioData), frame->pts * timeBase); 
+            playbackStateVariables.streamQueue.emplace(std::move(vecAudioData), frame->pts, timeBaseRational, frame->pts * timeBase);
         }
         swr_free(&swr);
     }
@@ -424,19 +425,39 @@ AudioAdapter::AudioCallbackResult AudioPlayer::renderAudioAsyncCallback(void*& o
     uint8_t* outBuffer = static_cast<uint8_t*>(outputBuffer);
     auto oneSize = playbackStateVariables.numberOfAudioOutputChannels * sizeof(uint16_t);
     std::unique_lock lockMtxStreamQueue(playbackStateVariables.mtxStreamQueue);
-    double currentPts = 0.0;
     //for (size_t i = 0; i < nFrames; ++i)
     {
         if (isPlaying() && !playbackStateVariables.streamQueue.empty()/*tryDequeue(streamQueue, one)*/)
         {
             auto& one = playbackStateVariables.streamQueue.front();
             // logger.info("Audio sample: {}", outBuffer[i]);
-            playbackStateVariables.audioClock.store(one.pts); // 更新音频时钟
-            currentPts = one.pts;
+            playbackStateVariables.audioClock.store(one.frameTime); // 更新音频时钟
+            auto pts = one.pts;
+            auto timeBase = one.timeBase;
+            auto frameTime = one.frameTime;
             std::copy(one.dataBytes.begin(), one.dataBytes.end(), outBuffer); // std::span<uint8_t> dataBytes{};
             //std::copy(one.dataBytes.begin(), one.dataBytes.end(), outBuffer + i * oneSize); // std::vector<uint8_t> dataBytes{}
             //std::memcpy(outBuffer + i * oneSize, one.dataBytes.data(), one.dataBytes.size());
             playbackStateVariables.streamQueue.pop();
+
+            // 填充音频数据后调用事件回调
+            FrameContext frameCtx{
+                playbackStateVariables.formatCtx.get(),
+                playbackStateVariables.codecCtx.get(),
+                playbackStateVariables.streamIndex,
+                { static_cast<uint8_t*>(outputBuffer), oneSize * nFrames },
+                oneSize * nFrames,
+                nFrames,
+                playbackStateVariables.codecCtx->sample_rate,
+                playbackStateVariables.numberOfAudioOutputChannels,
+                pts,
+                timeBase,
+                frameTime,
+                streamTime
+            };
+            AudioRenderEvent audioEvent{ &frameCtx };
+            event(&audioEvent);
+
         }
         else
         {
@@ -447,7 +468,7 @@ AudioAdapter::AudioCallbackResult AudioPlayer::renderAudioAsyncCallback(void*& o
         }
     }
     //lockMtxStreamQueue.unlock();
-    // 同步时钟
+    // 同步时钟，放在数据填充后可以免去seek后音频时钟跳动的问题（seek后未来得及修改时钟到正确的时钟就执行时钟同步）
     if (playbackStateVariables.playOptions.clockSyncFunction)
     {
         int64_t sleepTime = 0;
@@ -474,18 +495,6 @@ AudioAdapter::AudioCallbackResult AudioPlayer::renderAudioAsyncCallback(void*& o
     if (playbackStateVariables.streamQueue.size() < MIN_AUDIO_OUTPUT_STREAM_QUEUE_SIZE)
         playbackStateVariables.threadStateManager.wakeUpById(ThreadIdentifier::AudioDecodingThread);
     
-    FrameContext frameCtx{
-        { static_cast<uint8_t*>(outputBuffer), oneSize * nFrames },
-        oneSize * nFrames,
-        nFrames,
-        playbackStateVariables.codecCtx->sample_rate,
-        playbackStateVariables.numberOfAudioOutputChannels,
-        currentPts,
-        streamTime
-    };
-    AudioRenderEvent audioEvent{ &frameCtx };
-    event(&audioEvent);
-
     //logger.info("Got audio streams, current audio stream queue size: {}", getQueueSize(streamQueue));
     if (playerState == PlayerState::Stopped || playerState == PlayerState::Stopping
         || (playbackStateVariables.streamUploadFinished && playbackStateVariables.streamQueue.empty()/*!getQueueSize(streamQueue)*/))
@@ -549,9 +558,9 @@ void AudioPlayer::requestTaskProcessor()
         {
             if (taskItem.handler)
                 taskItem.handler(taskItem.event, taskItem.userData);
-            auto&& requestAfterHandleEvent = taskItem.event->clone(RequestHandleState::AfterHandle);
-            event(requestAfterHandleEvent.get());
         }
+        auto&& requestAfterHandleEvent = taskItem.event->clone(RequestHandleState::AfterHandle);
+        event(requestAfterHandleEvent.get());
         // 通知所有暂停的线程继续运行
         for (auto& waitObj : waitObjs)
         {
@@ -569,18 +578,44 @@ void AudioPlayer::requestTaskHandlerSeek(MediaRequestHandleEvent* e, std::any us
     auto* seekEvent = static_cast<MediaSeekEvent*>(e);
     uint64_t pts = seekEvent->timestamp();
     StreamIndexType streamIndex = seekEvent->streamIndex();
-    int rst = av_seek_frame(playbackStateVariables.formatCtx.get(), streamIndex, pts, 0);
+    int rst = av_seek_frame(playbackStateVariables.formatCtx.get(), streamIndex, pts, AVSEEK_FLAG_BACKWARD);
     if (rst < 0) // 寻找失败
     {
         logger.error("Error audio seeking to pts: {} in stream index: {}, duration: {}", pts, streamIndex, playbackStateVariables.formatCtx->duration);
+        // 恢复播放状态
+        setPlayerState(PlayerState::Playing);
         return;
     }
     // 清空队列
     playbackStateVariables.clearPktAndStreamQueues();
     // 刷新解码器buffer
     avcodec_flush_buffers(playbackStateVariables.codecCtx.get());
-    // 重置时钟
-    playbackStateVariables.audioClock.store(0.0);
+    // 先重置一下时钟
+    if (streamIndex >= 0)
+        playbackStateVariables.audioClock.store(pts * av_q2d(playbackStateVariables.formatCtx->streams[streamIndex]->time_base));
+    else
+        playbackStateVariables.audioClock.store(pts / (double)AV_TIME_BASE);
+    // 读取下一帧
+    AVPacket* pkt = nullptr;
+    while (true)
+    {
+        if (MediaDecodeUtils::readFrame(&logger, playbackStateVariables.formatCtx.get(), pkt, true))
+        {
+            if (pkt->stream_index != playbackStateVariables.streamIndex)
+            {
+                av_packet_free(&pkt); // 释放不需要的包
+                continue;
+            }
+            // 重置时钟
+            if (pkt->pts && pkt->stream_index >= 0) // 如果存在pts，否则pkt->stream_index不可取
+                playbackStateVariables.audioClock.store(pkt->pts * av_q2d(playbackStateVariables.formatCtx->streams[pkt->stream_index]->time_base));
+            // 入队
+            enqueue(playbackStateVariables.packetQueue, pkt);
+        }
+        else
+            if (pkt) av_packet_free(&pkt); // 释放包
+        break;
+    }
     if (playbackStateVariables.playOptions.clockSyncFunction)
     {
         int64_t sleepTime = 0;

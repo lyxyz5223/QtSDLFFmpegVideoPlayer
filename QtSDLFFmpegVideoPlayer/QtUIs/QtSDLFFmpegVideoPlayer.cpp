@@ -56,7 +56,7 @@ void QtSDLFFmpegVideoPlayer::selectFile()
     QString fileName = QFileDialog::getOpenFileName(this, tr("Open Video File"), "", tr("Video Files (*.mp4 *.avi *.mkv *.mov *.flv *.wmv *.mp3);;All Files (*)"));
     if (!fileName.isEmpty())
     {
-        qDebug() << "Selected file:" << fileName;
+        logger.info() << "Selected file:" << fileName.toStdString();
     }
 }
 
@@ -69,24 +69,16 @@ void QtSDLFFmpegVideoPlayer::selectFileAndPlay()
     std::thread([this, fileName]() {
         mediaPlayer.stop();
         mediaPlayer.play(fileName.toStdString(), SDLApp::getWindowId(sdlWidget->getSDLWindow()));
-        qDebug() << "Video Playback Finished";
+        logger.info() << "Media playback Finished";
         }).detach();
 }
 
 void QtSDLFFmpegVideoPlayer::mediaPlayPause()
 {
     if (mediaPlayer.isPlaying())
-    {
-        // 切换为暂停
-        mediaPlayer.pause();
-        ui.btnPlayPause->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::MediaPlaybackStart));
-    }
+        mediaPlayer.pause(); // 切换为暂停
     else
-    {
-        // 切换为播放
-        mediaPlayer.resume();
-        ui.btnPlayPause->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::MediaPlaybackPause));
-    }
+        mediaPlayer.resume(); // 切换为播放
 }
 
 void QtSDLFFmpegVideoPlayer::mediaStop()
@@ -106,63 +98,59 @@ void QtSDLFFmpegVideoPlayer::mediaNext()
 
 void QtSDLFFmpegVideoPlayer::mediaSeek()
 {
-    auto& value = mediaSliderMovingTo;
-    mediaPlayer.seek(static_cast<size_t>(value) * AV_TIME_BASE, -1);
-    //vp.seekAbsolute(static_cast<size_t>(value) * AV_TIME_BASE, -1, false);
-    qDebug() << "Seeking to:" << value << "s";
-    qDebug() << "Video Duration (s):" << this->videoDuration / AV_TIME_BASE;
+    logger.info("Seeking to: {} ms, duration: {} ms", mediaSeekingTime, duration);
+    mediaPlayer.seek(calcSeekTimeFromMs(mediaSeekingTime), -1);
 }
 
 void QtSDLFFmpegVideoPlayer::mediaSliderMoved(int value)
 {
-    //qDebug() << "Slider moved to:" << value;
     isMediaSliderMoving = true;
-    mediaSliderMovingTo = value;
+    mediaSeekingTime = value;
 }
-
 void QtSDLFFmpegVideoPlayer::mediaSliderPressed()
 {
     isMediaSliderMoving = true;
-    qDebug() << "Slider pressed at:" << ui.sliderMediaProgress->value();
-    mediaSliderMovingTo = ui.sliderMediaProgress->value();
+    mediaSeekingTime = ui.sliderMediaProgress->value();
 }
-
 void QtSDLFFmpegVideoPlayer::mediaSliderReleased()
 {
-    qDebug() << "Slider released at:" << mediaSliderMovingTo;
     isMediaSliderMoving = false;
     mediaSeek();
 }
-
 void QtSDLFFmpegVideoPlayer::mediaSliderValueChanged(int value)
 {
-    qDebug() << "Slider value changed to:" << value;
+    logger.trace("Current slider time: {} ms", value);
 }
 
 void QtSDLFFmpegVideoPlayer::beforePlaybackCallback(const AVFormatContext* formatCtx, const AVCodecContext* videoCodecCtx)
 {
-    this->videoDuration = formatCtx->duration;
-    ui.sliderMediaProgress->setRange(0, static_cast<int>(this->videoDuration / AV_TIME_BASE));
-    qDebug() << "Video Duration (s):" << this->videoDuration / AV_TIME_BASE;
-    // 更新进度条
-    ui.sliderMediaProgress->setValue(ui.sliderMediaProgress->minimum());
-    // 将播放按钮设置为播放中
-    ui.btnPlayPause->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::MediaPlaybackPause));
+    this->duration = calcMsFromAVDuration(formatCtx->duration); // 转换为毫秒
+    logger.info() << "Media Duration (ms):" << this->duration;
+    ui.sliderMediaProgress->setRange(0, this->duration); // 设置滑块范围
+    ui.sliderMediaProgress->setValue(0); // 重置进度条
 }
-
-void QtSDLFFmpegVideoPlayer::renderCallback(const MediaPlayer::VideoFrameContext& frameCtx)
+void QtSDLFFmpegVideoPlayer::videoRenderCallback(const MediaPlayer::VideoFrameContext& frameCtx)
 {
     // 更新进度条
     if (!isMediaSliderMoving)
     {
-        int currentTime = static_cast<int>(frameCtx.swRawFrame->pts * av_q2d(frameCtx.formatCtx->streams[frameCtx.streamIndex]->time_base));
-        ui.sliderMediaProgress->setValue(currentTime + ui.sliderMediaProgress->minimum());
+        int currentTime = calcMsFromTimeStamp(frameCtx.swRawFrame->pts, frameCtx.formatCtx->streams[frameCtx.streamIndex]->time_base);
+        auto sliderMin = ui.sliderMediaProgress->minimum();
+        ui.sliderMediaProgress->setValue(currentTime + sliderMin);
     }
 }
-
+void QtSDLFFmpegVideoPlayer::audioRenderCallback(const MediaPlayer::AudioFrameContext& frameCtx)
+{
+    // 更新进度条
+    if (!isMediaSliderMoving)
+    {
+        auto sliderMin = ui.sliderMediaProgress->minimum();
+        ui.sliderMediaProgress->setValue(frameCtx.frameTime * 1000 + sliderMin);
+    }
+}
 void QtSDLFFmpegVideoPlayer::afterPlaybackCallback()
 {
-    // 播放结束
+    // 播放结束，重置进度条
     ui.sliderMediaProgress->setValue(ui.sliderMediaProgress->minimum());
 }
 

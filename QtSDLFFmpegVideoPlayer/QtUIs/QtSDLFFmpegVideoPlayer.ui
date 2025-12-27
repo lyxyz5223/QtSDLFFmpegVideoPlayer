@@ -212,7 +212,7 @@
   </customwidget>
  </customwidgets>
  <resources>
-  <include location="QtSDLFFmpegVideoPlayer.qrc"/>
+  <include location="../resources/QtSDLFFmpegVideoPlayer.qrc"/>
  </resources>
  <connections>
   <connection>

@@ -3,7 +3,6 @@
 #include "PlayerPredefine.h"
 #include "VideoPlayer.h"
 #include "AudioPlayer.h"
-#include <qdebug.h>
 
 class MediaPlayer : public PlayerInterface
 {
@@ -23,6 +22,7 @@ public:
     using VideoUserDataType = VideoPlayer::UserDataType;
     using VideoFrameSwitchOptions = VideoPlayer::VideoFrameSwitchOptions;
     using VideoFrameContext = VideoPlayer::FrameContext;
+    using AudioFrameContext = AudioPlayer::FrameContext;
     using VideoFrameSwitchOptionsCallback = VideoPlayer::VideoFrameSwitchOptionsCallback;
     using VideoClockSyncFunction = VideoPlayer::VideoClockSyncFunction;
     using AudioClockSyncFunction = AudioPlayer::AudioClockSyncFunction;
@@ -67,17 +67,16 @@ public:
             player.logger.info("Video playback stopped.");
         }
         virtual void requestHandleEvent(MediaRequestHandleEvent* e) override {
-            auto mediaEvent = e->clone();
-            player.event(mediaEvent.get());
+            player.event(e);
         }
         // seek进度调整事件
         virtual void seekEvent(MediaSeekEvent* e) override {
             switch (e->handleState())
             {
             case RequestHandleState::BeforeEnqueue:
+                player.videoSeekingCount.fetch_add(1);
                 break;
             case RequestHandleState::AfterEnqueue:
-                player.videoSeekingCount.fetch_add(1);
                 break;
             case RequestHandleState::BeforeHandle:
                 player.logger.info("Video seek requested to pts: {}, stream index: {}", e->timestamp(), e->streamIndex());
@@ -115,16 +114,15 @@ public:
             player.logger.info("Audio playback stopped.");
         }
         virtual void requestHandleEvent(MediaRequestHandleEvent* e) override {
-            auto mediaEvent = e->clone();
-            player.event(mediaEvent.get());
+            player.event(e);
         }
         virtual void seekEvent(MediaSeekEvent* e) override {
             switch (e->handleState())
             {
             case RequestHandleState::BeforeEnqueue:
+                player.audioSeekingCount.fetch_add(1);
                 break;
             case RequestHandleState::AfterEnqueue:
-                player.audioSeekingCount.fetch_add(1);
                 break;
             case RequestHandleState::BeforeHandle:
                 player.logger.info("Audio seek requested to pts: {}, stream index: {}", e->timestamp(), e->streamIndex());
@@ -211,22 +209,10 @@ private:
                 double sleepTimeS = videoClock.load() - audioClock.load(); // 单位：秒
                 sleepTime = static_cast<int64_t>(sleepTimeS * 1000); // 转换为毫秒
             }
-            else
-            {
-                double sleepTimeS = videoClock.load() - videoRealtimeClock; // 单位：秒
-                sleepTime = static_cast<int64_t>(sleepTimeS * 1000); // 转换为毫秒
-            }
             return true; // 直接返回true，交给调用者处理
             // 返回值true && (sleepTime != 0)表示需要睡眠/丢帧，false || (sleepTime == 0)表示不需要
         }
-        else if(0 == videoSeekingCount && audioSeekingCount == 0
-            && !isAudioClockStable.load() && isClockStable.load())
-        {
-            double sleepTimeS = videoClock.load() - videoRealtimeClock; // 单位：秒
-            sleepTime = static_cast<int64_t>(sleepTimeS * 1000); // 转换为毫秒
-            return true;
-        }
-        qDebug() << "videoSeekingCount:" << videoSeekingCount.load() << ", audioSeekingCount:" << audioSeekingCount.load()
+        logger.trace() << "videoSeekingCount:" << videoSeekingCount.load() << ", audioSeekingCount:" << audioSeekingCount.load()
             << ", isAudioClockStable:" << isAudioClockStable.load() << ", isClockStable:" << isClockStable.load();
         return false;
         };
@@ -306,20 +292,28 @@ public:
     // 跳转到指定pts位置
     // \param streamIndex -1表示使用AV_TIME_BASE计算，否则使用streamIndex指定的流的time_base
     virtual void notifySeek(uint64_t pts, StreamIndexType streamIndex = -1) override {
+        videoSeekingCount.fetch_add(1); // Fix the problem that audio haven't seeked yet when video seeked complete
+        audioSeekingCount.fetch_add(1); // 修复视频seek完成时音频还没有seek的问题
         std::thread videoThread([&] { this->videoPlayer.notifySeek(pts, streamIndex); });
         std::thread audioThread([&] { this->audioPlayer.notifySeek(pts, streamIndex); });
         if (audioThread.joinable())
             audioThread.join();
         if (videoThread.joinable())
             videoThread.join();
+        videoSeekingCount.fetch_sub(1); // Fix
+        audioSeekingCount.fetch_sub(1); // Fix
     }
     virtual void seek(uint64_t pts, StreamIndexType streamIndex = -1) override {
+        videoSeekingCount.fetch_add(1); // Fix the problem that audio haven't seeked yet when video seeked complete
+        audioSeekingCount.fetch_add(1); // 修复视频seek完成时音频还没有seek的问题
         std::thread videoThread([&] { this->videoPlayer.seek(pts, streamIndex); });
         std::thread audioThread([&] { this->audioPlayer.seek(pts, streamIndex); });
         if (audioThread.joinable())
             audioThread.join();
         if (videoThread.joinable())
             videoThread.join();
+        videoSeekingCount.fetch_sub(1); // Fix
+        audioSeekingCount.fetch_sub(1); // Fix
     }
 
     virtual bool isPlaying() const override {
@@ -399,7 +393,7 @@ protected:
 
     virtual void audioRenderEvent(AudioRenderEvent* e) {
         auto ctx = e->frameContext();
-        logger.trace("Audio render event: pts={}, streamTime={}, numberOfChannels={}, sampleRate={}, dataSize={}", ctx->pts, ctx->streamTime, ctx->numberOfChannels, ctx->sampleRate, ctx->dataSize);
+        logger.trace("Audio render event: pts={}, streamTime={}, numberOfChannels={}, sampleRate={}, dataSize={}", ctx->frameTime, ctx->streamTime, ctx->numberOfChannels, ctx->sampleRate, ctx->dataSize);
     }
 
     // 重写事件处理函数

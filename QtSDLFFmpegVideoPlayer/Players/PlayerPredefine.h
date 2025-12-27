@@ -484,7 +484,7 @@ public:
                     return;
                 obj.state.set(Paused);
                 obj.cv.notify_all();
-                obj.cv.wait(lock, [&] { return obj.state != Pausing && obj.state != Paused; });
+                obj.cv.wait(lock, [&] { return obj.state != Paused; });
             }
             // 阻塞线程
             void block() {
@@ -493,7 +493,7 @@ public:
                     return;
                 obj.state.set(Blocked);
                 obj.cv.notify_all();
-                obj.cv.wait(lock, [&] { return obj.state != Blocking && obj.state != Blocked; });
+                obj.cv.wait(lock, [&] { return obj.state != Blocked; });
             }
             // 设置为阻塞并等待状态变更
             void setBlockedAndWaitChanged(bool wakeUpBeforeWait = true) {
@@ -501,7 +501,7 @@ public:
                 obj.state.set(Blocking);
                 if (wakeUpBeforeWait)
                     obj.cv.notify_all();
-                obj.cv.wait(lock, [&] { return obj.state == Blocked; });
+                obj.cv.wait(lock, [&] { return obj.state != Blocking; });
             }
             void disableWakeUp() {
                 obj.noWakeUp.store(true);
