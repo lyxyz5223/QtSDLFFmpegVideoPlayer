@@ -62,6 +62,8 @@ bool AudioPlayer::playAudioFile()
         return false;
     }
     // 打开音频设备
+    if (!this->playbackStateVariables.codecCtx->frame_size)
+        this->playbackStateVariables.codecCtx->frame_size = DEFAULT_AUDIO_OUTPUT_STREAM_BUFFER_SIZE;
     unsigned int frameBufferSize = this->playbackStateVariables.codecCtx->frame_size;
     if (!openAndStartOutputAudioStream(this->playbackStateVariables.codecCtx->sample_rate, this->playbackStateVariables.codecCtx->ch_layout, AUDIO_OUTPUT_FORMAT, &frameBufferSize))
     {
@@ -165,7 +167,6 @@ bool AudioPlayer::openOutputAudioStream(int sampleRate, AVChannelLayout channelL
     outputParams.deviceId = playbackStateVariables.audioDevice->getDefaultOutputDevice();
     outputParams.firstChannel = 0;
     outputParams.nChannels = channelLayout.nb_channels;
-    playbackStateVariables.numberOfAudioOutputChannels.store(channelLayout.nb_channels);
     AudioAdapter::AudioStreamOptions options;
     if (audioDeviceApiType == AudioAdapterFactory::PortAudioAdapter)
         options.flags = AudioAdapter::ClipOff;
@@ -185,13 +186,15 @@ bool AudioPlayer::openOutputAudioStream(int sampleRate, AVChannelLayout channelL
             return this->renderAudioAsyncCallback(outputBuffer, inputBuffer, nFrames, streamTime, status, rawArgs, userData);
         },
         this, pOptions);
+
     if (result != AudioAdapter::NoError)
     {
         playbackStateVariables.audioDevice.reset();
         return false;
     }
 
-
+    playbackStateVariables.numberOfAudioOutputChannels.store(channelLayout.nb_channels);
+    playbackStateVariables.audioOutputStreamBufferSize.store(*pFrameBufferSize);
     //PaError err = Pa_Initialize();
     //if (err != paNoError)
     //    return false;
@@ -321,6 +324,11 @@ void AudioPlayer::packet2AudioStreams()
     AVFrame* frame = av_frame_alloc();
     //int64_t startTime = 0;
     //bool started = false;
+
+    // 转换音频格式
+    UniquePtr<AVFrame> convertedFrame = { nullptr, constDeleterAVFrame };
+    // 使用swresample进行格式转换
+    SwrContext* swr = nullptr;
     while (1)
     {
         if (waitObj.isBlocking())
@@ -360,10 +368,6 @@ void AudioPlayer::packet2AudioStreams()
         int aspRst = avcodec_send_packet(playbackStateVariables.codecCtx.get(), pkt);
         if (aspRst < 0 && aspRst != AVERROR(EAGAIN) && aspRst != AVERROR_EOF)
             continue;
-        // 转换音频格式
-        UniquePtr<AVFrame> convertedFrame = { nullptr, constDeleterAVFrame };
-        // 使用swresample进行格式转换
-        SwrContext* swr = nullptr;
         while (avcodec_receive_frame(playbackStateVariables.codecCtx.get(), frame) == 0)
         {
             if (!convertedFrame)
@@ -372,7 +376,7 @@ void AudioPlayer::packet2AudioStreams()
                 convertedFrame->sample_rate = frame->sample_rate;
                 convertedFrame->ch_layout = frame->ch_layout;
                 convertedFrame->format = AUDIO_OUTPUT_FORMAT;
-                convertedFrame->nb_samples = frame->nb_samples;
+                convertedFrame->nb_samples = playbackStateVariables.audioOutputStreamBufferSize; // 输出固定样本数
                 int ret = av_frame_get_buffer(convertedFrame.get(), 0);
                 if (ret < 0)
                 {
@@ -436,8 +440,8 @@ void AudioPlayer::packet2AudioStreams()
             //}
             playbackStateVariables.streamQueue.emplace(std::move(vecAudioData), frame->pts, timeBaseRational, frame->pts * timeBase);
         }
-        swr_free(&swr);
     }
+    swr_free(&swr);
     av_frame_free(&frame);
 }
 
@@ -466,7 +470,7 @@ AudioAdapter::AudioCallbackResult AudioPlayer::renderAudioAsyncCallback(void*& o
     std::unique_lock lockMtxStreamQueue(playbackStateVariables.mtxStreamQueue);
     //for (size_t i = 0; i < nFrames; ++i)
     {
-        if (isPlaying() && !playbackStateVariables.streamQueue.empty()/*tryDequeue(streamQueue, one)*/)
+        if (nFrames && isPlaying() && !playbackStateVariables.streamQueue.empty()/*tryDequeue(streamQueue, one)*/)
         {
             auto& one = playbackStateVariables.streamQueue.front();
             // logger.info("Audio sample: {}", outBuffer[i]);

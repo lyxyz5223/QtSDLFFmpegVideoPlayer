@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>594</width>
-    <height>437</height>
+    <width>780</width>
+    <height>424</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -169,7 +169,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>594</width>
+     <width>780</width>
      <height>21</height>
     </rect>
    </property>
@@ -192,6 +192,21 @@
    </attribute>
   </widget>
   <widget class="QStatusBar" name="statusBar"/>
+  <widget class="QDockWidget" name="playListDockWidget">
+   <property name="floating">
+    <bool>false</bool>
+   </property>
+   <property name="features">
+    <set>QDockWidget::DockWidgetFeature::DockWidgetClosable|QDockWidget::DockWidgetFeature::DockWidgetFloatable|QDockWidget::DockWidgetFeature::DockWidgetMovable</set>
+   </property>
+   <property name="windowTitle">
+    <string>播放列表</string>
+   </property>
+   <attribute name="dockWidgetArea">
+    <number>2</number>
+   </attribute>
+   <widget class="PlayListWidget" name="playListDockWidgetContents"/>
+  </widget>
   <action name="actionOpenFile">
    <property name="text">
     <string>打开</string>
@@ -210,6 +225,12 @@
    <extends>QPushButton</extends>
    <header>roundediconbutton.h</header>
   </customwidget>
+  <customwidget>
+   <class>PlayListWidget</class>
+   <extends>QWidget</extends>
+   <header>playlistwidget.h</header>
+   <container>1</container>
+  </customwidget>
  </customwidgets>
  <resources>
   <include location="../resources/QtSDLFFmpegVideoPlayer.qrc"/>
@@ -222,8 +243,8 @@
    <slot>mediaSliderMoved(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>30</x>
-     <y>370</y>
+     <x>39</x>
+     <y>347</y>
     </hint>
     <hint type="destinationlabel">
      <x>27</x>
@@ -238,8 +259,8 @@
    <slot>mediaSliderPressed()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>47</x>
-     <y>369</y>
+     <x>56</x>
+     <y>347</y>
     </hint>
     <hint type="destinationlabel">
      <x>50</x>
@@ -254,8 +275,8 @@
    <slot>mediaSliderReleased()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>79</x>
-     <y>370</y>
+     <x>88</x>
+     <y>347</y>
     </hint>
     <hint type="destinationlabel">
      <x>75</x>
@@ -270,8 +291,8 @@
    <slot>mediaSliderValueChanged(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>103</x>
-     <y>373</y>
+     <x>112</x>
+     <y>347</y>
     </hint>
     <hint type="destinationlabel">
      <x>108</x>
@@ -286,8 +307,8 @@
    <slot>mediaPlayPause()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>246</x>
-     <y>403</y>
+     <x>332</x>
+     <y>392</y>
     </hint>
     <hint type="destinationlabel">
      <x>213</x>
@@ -302,8 +323,8 @@
    <slot>mediaStop()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>279</x>
-     <y>399</y>
+     <x>366</x>
+     <y>392</y>
     </hint>
     <hint type="destinationlabel">
      <x>279</x>
@@ -318,7 +339,7 @@
    <slot>mediaPrevious()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>318</x>
+     <x>400</x>
      <y>392</y>
     </hint>
     <hint type="destinationlabel">
@@ -334,7 +355,7 @@
    <slot>mediaNext()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>351</x>
+     <x>434</x>
      <y>392</y>
     </hint>
     <hint type="destinationlabel">

@@ -102,8 +102,6 @@ protected:
 public slots:
     void sdlEventLoop();
 
-    void selectFile();
-
     void selectFileAndPlay();
 
     void mediaPlayPause();
@@ -166,16 +164,12 @@ private:
     // 播放停止后（无论什么原因）调用
     void afterPlaybackCallback();
 
+    void playerPlay(QString filePath);
+
     constexpr static auto SDLPollEventFunction = []() -> int {
         SDL_Event e;
         return SDL_PollEvent(&e);
         };
 
-
-    struct PlayListItem
-    {
-        std::string filePath;
-    };
-    QList<PlayListItem> vecPlayList;
 
 };

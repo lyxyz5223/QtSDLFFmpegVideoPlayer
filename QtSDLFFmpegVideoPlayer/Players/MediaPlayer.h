@@ -305,11 +305,19 @@ private:
         execPlayerWithThreads({ [&] { waitComponentsStop(); }, [&] { vr = videoPlayer->play(); }, [&] { ar = audioPlayer->play(); }});
         return ar && vr;
     }
-    void prepareToPlay() {
+    bool prepareToPlay() {
         if (demuxerMode == ComponentWorkMode::External)
-            demuxer->openAndSelectStreams(filePath, demuxerStreamTypes, streamIndexSelector);
+        {
+            try {
+                demuxer->openAndSelectStreams(filePath, demuxerStreamTypes, streamIndexSelector);
+            }
+            catch (std::exception e) {
+                return false;
+            }
+        }
         if (requestTaskQueueHandlerMode == ComponentWorkMode::External)
             requestTaskQueueHandler->start();
+        return true;
     }
     void waitComponentsStop() {
         if (demuxerMode == ComponentWorkMode::External)
@@ -339,11 +347,13 @@ public:
     // 如果使用VideoPlayOptions，则enableHardwareDecoder会失效
     bool play(const std::string& filePath, const MediaPlayOptions& options) {
         this->setFilePath(filePath);
-        prepareToPlay();
+        if (!prepareToPlay())
+            return false;
         return playMediaFile(options);
     }
     virtual bool play() override {
-        prepareToPlay();
+        if (!prepareToPlay())
+            return false;
         return playMediaFile();
     }
     virtual void resume() override {

@@ -2,11 +2,17 @@
 #include "SDLApp.h"
 #include <QTimer>
 #include <QFileDialog>
+#include <PlayListWidget.h>
 
 QtSDLFFmpegVideoPlayer::QtSDLFFmpegVideoPlayer(QWidget* parent)
     : QMainWindow(parent)
 {
     ui.setupUi(this);
+    ui.playListDockWidgetContents->setPlayCallback([this](const QModelIndex& index) {
+        QString filePath = ui.playListDockWidgetContents->getPlayListItem(index).url;
+        playerPlay(filePath);
+        });
+
     ui.videoRenderWidget->setAttribute(Qt::WA_PaintOnScreen);
     ui.videoRenderWidget->setAttribute(Qt::WA_NativeWindow);
     ui.videoRenderWidget->resize(size());
@@ -50,27 +56,13 @@ void QtSDLFFmpegVideoPlayer::sdlEventLoop()
     SDLApp::instance()->runEventLoop();
 }
 
-void QtSDLFFmpegVideoPlayer::selectFile()
-{
-    // 打开文件对话框
-    QString fileName = QFileDialog::getOpenFileName(this, tr("Open Video File"), "", tr("Video Files (*.mp4 *.avi *.mkv *.mov *.flv *.wmv *.mp3);;All Files (*)"));
-    if (!fileName.isEmpty())
-    {
-        logger.info() << "Selected file:" << fileName.toStdString();
-    }
-}
-
 void QtSDLFFmpegVideoPlayer::selectFileAndPlay()
 {
-    // 打开文件对话框
-    QString fileName = QFileDialog::getOpenFileName(this, tr("Open Video File"), "", tr("Video Files (*.mp4 *.avi *.mkv *.mov *.flv *.wmv *.mp3);;All Files (*)"));
-    if (fileName.isEmpty())
-        return;
-    std::thread([this, fileName]() {
-        mediaPlayer.stop();
-        mediaPlayer.play(fileName.toStdString(), SDLApp::getWindowId(sdlWidget->getSDLWindow()));
-        logger.info() << "Media playback Finished";
-        }).detach();
+    auto& playlist = ui.playListDockWidgetContents->playList();
+    auto oldSize = playlist.size();
+    ui.playListDockWidgetContents->itemAdd();
+    if (!playlist.size() || playlist.size() <= oldSize) return;
+    playerPlay(playlist.at(oldSize).url);
 }
 
 void QtSDLFFmpegVideoPlayer::mediaPlayPause()
@@ -152,5 +144,14 @@ void QtSDLFFmpegVideoPlayer::afterPlaybackCallback()
 {
     // 播放结束，重置进度条
     ui.sliderMediaProgress->setValue(ui.sliderMediaProgress->minimum());
+}
+
+void QtSDLFFmpegVideoPlayer::playerPlay(QString filePath)
+{
+    std::thread([this, filePath]() {
+        mediaPlayer.stop();
+        mediaPlayer.play(filePath.toStdString(), SDLApp::getWindowId(sdlWidget->getSDLWindow()));
+        logger.info() << "Media playback Finished";
+        }).detach();
 }
 

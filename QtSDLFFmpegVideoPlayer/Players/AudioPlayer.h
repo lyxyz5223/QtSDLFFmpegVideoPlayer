@@ -21,6 +21,8 @@ public:
     static constexpr size_t MIN_AUDIO_PACKET_QUEUE_SIZE = 100; // 最小音频帧队列数量
     // 统一音频转换后用于播放的格式
     static constexpr AVSampleFormat AUDIO_OUTPUT_FORMAT = AVSampleFormat::AV_SAMPLE_FMT_S16;
+    // 用于播放的格式每单位样本大小
+    static constexpr int AUDIO_OUTPUT_FORMAT_BYTES_PER_SAMPLE = sizeof(uint16_t); // AV_SAMPLE_FMT_S16 每个样本2字节
 
     static constexpr StreamTypes STREAM_TYPES = StreamType::STAudio;
 
@@ -88,6 +90,7 @@ private:
         // 音频输出与设备
         UniquePtrD<AudioAdapter> audioDevice;
         AtomicInt numberOfAudioOutputChannels = DEFAULT_NUMBER_CHANNELS_AUDIO_OUTPUT;
+        Atomic<unsigned int> audioOutputStreamBufferSize = DEFAULT_AUDIO_OUTPUT_STREAM_BUFFER_SIZE;
         Mutex mtxStreamQueue; // 用于保证在写入一段的时候不被读取
         Queue<AudioStreamInfo> streamQueue;
         AtomicBool streamUploadFinished{ false };
