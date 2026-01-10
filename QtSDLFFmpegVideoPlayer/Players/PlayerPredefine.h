@@ -39,6 +39,20 @@ extern "C"
 
 #include "ThreadUtils.h"
 
+// 定义播放器日志槽列表
+#define DefinePlayerLoggerSinks(variableName, fileLoggerNameWithoutSuffix) \
+const std::vector<LoggerSinkPtr> variableName{ \
+    std::make_shared<ConsoleLoggerSink>(), \
+    std::make_shared<FileLoggerSink>(std::string(".\\logs\\") + fileLoggerNameWithoutSuffix + std::string(".class.log")), \
+    /*End*/}
+/////
+
+
+class PlayerInterface; // 前置声明
+class MediaDecodeUtils;
+class ConcurrentQueueOps;
+class PlayerTypes;
+
 class PlayerTypes
 {
 public:
@@ -68,16 +82,55 @@ public:
 
     typedef long long StreamIndexType;
     // 查找到的流类型，支持按位与或运算符组合使用
-    enum StreamType : char { // ST是StreamType的缩写，占用一个字节
+    // 基础类型必须为unsigned类型，否则需要修改streamTypesVisit函数中的max计算方式
+    enum StreamType : unsigned char { // ST是StreamType的缩写，占用一个字节
         STNone = 0x0,
         STVideo = 0x1, // 视频
         STAudio = 0x2, // 音频
         STData = 0x4, // 数据
         STSubtitle = 0x8, // 字幕
-        STAttachment = 0x10 // 附件
+        STAttachment = 0x10, // 附件
+        STAll = 0xFF
     };
     // 定义：支持按位与或运算符的StreamType组合类型
     using StreamTypes = MultiEnumTypeDefine<StreamType>;
+    constexpr static size_t StreamTypeSize = sizeof(std::underlying_type_t<StreamType>); // StreamType枚举值字节数
+    constexpr static size_t StreamTypeCount = 5; // StreamType枚举值字节数
+    // 返回false结束遍历，true继续遍历
+    static void streamTypesVisit(StreamTypes streamTypes, std::function<bool(StreamType streamType, std::any userData)> visit, std::any userData = std::any{}) { // 遍历
+        size_t count = 0;
+        std::underlying_type_t<StreamType> max = (1 << (StreamTypeSize * 8 - 1));
+        //memset(&max, 0xFF, StreamTypeSize); // 全1
+        for (std::underlying_type_t<StreamType> i = STNone + 1; i <= max; i <<= 1/*左移1位*/)
+        {
+            if (streamTypes.contains(static_cast<StreamType>(i)))
+            {
+                ++count;
+                if (!visit(static_cast<StreamType>(i), userData))
+                    break;
+            }
+            if (count == StreamTypeCount || i == max)
+                break; // 已遍历的数量达到定义的枚举值数量，结束遍历
+        }
+    }
+    static constexpr AVMediaType streamTypeToAVMediaType(StreamType type) {
+        switch (type)
+        {
+        case StreamType::STVideo:
+            return AVMEDIA_TYPE_VIDEO;
+        case StreamType::STAudio:
+            return AVMEDIA_TYPE_AUDIO;
+        case StreamType::STData:
+            return AVMEDIA_TYPE_DATA;
+        case StreamType::STSubtitle:
+            return AVMEDIA_TYPE_SUBTITLE;
+        case StreamType::STAttachment:
+            return AVMEDIA_TYPE_ATTACHMENT;
+        default:
+            return AVMEDIA_TYPE_NB;
+        }
+    }
+
     // 队列
     template <class T, class Container = std::deque<T>>
     using Queue = std::queue<T, Container>;
@@ -88,6 +141,9 @@ public:
     using UniquePtr = std::unique_ptr<T, ConstDeleter<T>>;
     template<typename T, typename Deleter = std::default_delete<T>>
     using UniquePtrD = std::unique_ptr<T, Deleter>;
+    template<typename T>
+    using SharedPtr = std::shared_ptr<T>;
+
     // 流索引映射类型
     template <typename T>
     using FromStreamIndexMap = std::unordered_map<StreamIndexType, T>;
@@ -215,14 +271,6 @@ public:
     };
     using PlayerStateEnum = EnumType<PlayerState>;
 
-    enum class MediaType : char {
-        Unknown = -1,
-        Video = 0,
-        Audio = 1,
-        Data = 2,
-        Subtitle = 3,
-        Attachment = 4,
-    };
 
     enum class RequestTaskType : char {
         None = 0,
@@ -236,12 +284,15 @@ public:
     };
     enum class ThreadIdentifier {
         None = 0,
-        VideoReadingThread = 1, // av_read_frame线程
-        VideoDecodingThread, // av_send_packet + av_receive_frame线程
-        VideoRenderingThread, // renderer渲染线程
-        AudioReadingThread, // av_read_frame线程
-        AudioDecodingThread, // av_send_packet + av_receive_frame线程
-        AudioPlayingThread, // audio播放线程
+        Demuxer = 1,
+        Decoder,
+        Renderer,
+        //VideoReadingThread = 1, // av_read_frame线程
+        //VideoDecodingThread, // av_send_packet + av_receive_frame线程
+        //VideoRenderingThread, // renderer渲染线程
+        //AudioReadingThread, // av_read_frame线程
+        //AudioDecodingThread, // av_send_packet + av_receive_frame线程
+        //AudioPlayingThread, // audio播放线程
     };
 
     class MediaEventType {
@@ -417,12 +468,82 @@ public:
         std::vector<ThreadIdentifier> blockTargetThreadIds; // 需要暂停等待当前任务处理完成的线程ID列表
     };
 
+    class ThreadStateManager;
+    class RequestTaskQueueHandler {
+        // 请求任务队列
+        Queue<RequestTaskItem> queueRequestTasks;
+        Mutex mtxQueueRequestTasks;
+        ConditionVariable cvQueueRequestTasks;
+        //std::function<bool(MediaEvent* e)> eventDispatcher{nullptr};
+        PlayerInterface* player{ nullptr };
+        AtomicBool stopped{ false };
+        AtomicWaitObject<bool> waitStopped{ true };
+        std::thread requestTaskHandlerThread;
+        using ThreadBlocker = std::function<void(const RequestTaskItem& taskItem, std::any& userData)>;
+        using ThreadAwakener = ThreadBlocker;
+        struct ThreadStateHandlersContext {
+            ThreadBlocker threadBlocker{ nullptr };
+            ThreadAwakener threadAwakener{ nullptr };
+            std::any blockerAwakenerUserData;
+        };
+        std::unordered_map<StreamType, ThreadStateHandlersContext> threadStateHandlersMap;
+    public:
+        RequestTaskQueueHandler(PlayerInterface* player = nullptr) : player(player) {}
+        void addThreadStateHandlersContext(StreamType streamType, const ThreadBlocker& threadBlocker, const ThreadAwakener& threadAwakener, std::any userData = std::any{}) {
+            threadStateHandlersMap.try_emplace(streamType,
+                threadBlocker,
+                threadAwakener,
+                userData);
+        }
+        void removeThreadStateHandlersContext(StreamType streamType) {
+            auto it = threadStateHandlersMap.find(streamType);
+            if (it != threadStateHandlersMap.end())
+                threadStateHandlersMap.erase(it);
+        }
+
+        void push(RequestTaskType requestType, std::vector<ThreadIdentifier> blockTargetThreadIds, MediaRequestHandleEvent* event, std::function<void(MediaRequestHandleEvent* e, std::any userData)> handler, std::any userData = std::any{});
+
+        void reset();
+
+        void stop() {
+            notifyStop();
+            waitStopped.wait(true);
+        }
+
+        void start() {
+            stopped.set(false);
+            requestTaskHandlerThread = std::thread(&RequestTaskQueueHandler::requestTaskHandler, this);
+        }
+
+        void waitStop() {
+            if (requestTaskHandlerThread.joinable())
+                requestTaskHandlerThread.join();
+        }
+
+    private:
+        void notifyAll() {
+            cvQueueRequestTasks.notify_all();
+        }
+        void notifyStop() {
+            stopped.set(true);
+            notifyAll();
+        }
+        bool shouldStop() const {
+            return stopped.load();
+        }
+        bool eventDispatcher(MediaEvent* e);
+        void requestTaskHandler();
+    };
+
     // 打开文件的时候会查找流，并调用流选择器，用于选择需要解码的流
     // 返回true表示选择成功，outStreamIndex为选中的流索引，streamIndicesList为所有可选流索引列表
     // 如果返回false，则表示未选择任何流
-    using StreamIndexSelector = std::function<bool(StreamIndexType& outStreamIndex, MediaType type, const std::vector<StreamIndexType>& streamIndicesList, const AVFormatContext* fmtCtx, const AVCodecContext* codecCtx)>;
+    using StreamIndexSelector = std::function<bool(StreamIndexType& outStreamIndex, StreamType type, const std::span<AVStream*> streamIndicesList, const AVFormatContext* fmtCtx)>;
 
-
+    enum class ComponentWorkMode {
+        Internal,
+        External
+    };
 
     class ThreadStateManager {
     public:
@@ -433,31 +554,28 @@ public:
             Paused,
             Pausing,
         };
-    private:
-        //typedef AtomicWaitObject<ThreadState> WaitObject;
-        struct Obj
+        class ThreadStateObj
         {
             ThreadIdentifier tid{ ThreadIdentifier::None };
             Atomic<ThreadState> state = Playing;
             ConditionVariable cv;
             Mutex mtx;
             AtomicBool noWakeUp = false;
-            Obj() {}
-            Obj(ThreadIdentifier tid) : tid(tid) {}
+            friend class ThreadStateController;
+            friend class ThreadStateManager;
+            //ThreadStateObj() {}
+        public:
+            ThreadStateObj(ThreadIdentifier tid) : tid(tid) {}
         };
-        using ObjsHashMap = std::unordered_map<ThreadIdentifier, Obj>;
-        ObjsHashMap mapObjs;
-        SharedMutex mtxMapObjs;
-    public:
         class ThreadStateController {
         private:
-            Obj& obj;
+            ThreadStateObj& obj;
             SharedMutex* mtx = nullptr;
         public:
             // 无锁构造
-            ThreadStateController(Obj& s) : obj(s) {}
-            // 带共享锁构造，可以延长shared_lock的生命周期
-            ThreadStateController(Obj& s, SharedMutex& mtx) : obj(s), mtx(&mtx) {}
+            ThreadStateController(ThreadStateObj& s) : obj(s) {}
+            // 带共享锁构造
+            //ThreadStateController(ThreadStateObj& s, SharedMutex& mtx) : obj(s), mtx(&mtx) {}
             bool testFlag(ThreadState s) const {
                 return obj.state.load() == s;
             }
@@ -520,7 +638,6 @@ public:
                 return obj.tid;
             }
         };
-    public:
         class AutoRemovedThreadObj {
             ThreadStateManager& tsm;
             ThreadStateController& obj;
@@ -529,8 +646,19 @@ public:
             ~AutoRemovedThreadObj() {
                 tsm.removeThread(obj.getThreadId());
             }
+            ThreadStateManager& getManager() {
+                return tsm;
+            }
+            ThreadStateController& getController() {
+                return obj;
+            }
         };
-
+    private:
+        //typedef AtomicWaitObject<ThreadState> WaitObject;
+        using ObjsHashMap = std::unordered_map<ThreadIdentifier, ThreadStateObj>;
+        ObjsHashMap mapObjs;
+        SharedMutex mtxMapObjs;
+    public:
         ThreadStateController addThread(ThreadIdentifier tid) {
             std::unique_lock lockMtxMapObjs(mtxMapObjs);
             // < C++17 写法
@@ -574,7 +702,7 @@ public:
             std::unique_lock lockMtxMapObjs(mtxMapObjs);
             mapObjs.clear();
         }
-        // 参数1决定是否继续遍历，如果返回false，则停止遍历过程
+        // 参数func决定是否继续遍历，如果返回false，则停止遍历过程
         void visit(std::function<bool(ObjsHashMap::iterator& iter, std::any& userData)> func, std::any userData) {
             std::shared_lock readLockMtxMapObjs(mtxMapObjs);
             for (auto it = mapObjs.begin(); it != mapObjs.end(); ++it)
@@ -582,230 +710,323 @@ public:
                     break;
         }
     };
+    struct DemuxerInterface;
+    static void threadBlocker(Logger& logger, const std::vector<ThreadIdentifier>& blockTargetThreadIds, ThreadStateManager& threadStateManager, DemuxerInterface* demuxer, std::vector<ThreadStateManager::ThreadStateController>& outWaitObjs, bool& outDemuxerPaused);
+    static void threadAwakener(std::vector<ThreadStateManager::ThreadStateController>& waitObjs, DemuxerInterface* demuxer, bool demuxerPaused);
+
+
+    // 解复用器接口
+    struct DemuxerInterface {
+        static constexpr size_t defaultMaxPacketQueueSize = 200;
+        static constexpr size_t defaultMinPacketQueueSize = 100;
+        struct StreamContext {
+            StreamType type{ StreamType::STNone };
+            StreamIndexType index{ -1 };
+            ConcurrentQueue<AVPacket*> packetQueue;
+            // 包队列最大最小值
+            size_t maxPacketQueueSize = defaultMaxPacketQueueSize;
+            size_t minPacketQueueSize = defaultMinPacketQueueSize;
+            std::function<void()> packetEnqueueCallback{ nullptr }; // 每次成功入队一个AVPacket后调用的回调函数，回调调用时将暂停解码
+            StreamContext(StreamType type) : type(type) {}
+        };
+        virtual ~DemuxerInterface() {
+            close(); // 确保关闭
+        }
+        virtual bool open(const std::string& url);
+        virtual void close();
+        virtual bool isOpen() const { return opened; }
+        virtual bool findStreamInfo();
+        virtual bool selectStreamsIndices(StreamTypes streamTypes, StreamIndexSelector selector) = 0;
+        // 读取一个包，不论这个包是什么流类型
+        virtual AVPacket* getOnePacket() = 0;
+        // 让解复用器读取一个合适的包，并存入队列，可以通过参数获取到读取到的包
+        virtual bool readOnePacket(AVPacket** pkt = nullptr) = 0;
+        virtual void setMaxPacketQueueSize(StreamType type, size_t size) = 0;
+        virtual void setMinPacketQueueSize(StreamType type, size_t size) = 0;
+        virtual void flushPacketQueue(StreamType type) = 0;
+        virtual void reset() = 0;
+        virtual void setPacketEnqueueCallback(StreamType type, const std::function<void()>& callback) = 0;
+        virtual void addStreamType(StreamType type) = 0;
+        virtual bool isStreamTypeAdded(StreamType type) const = 0; // 用于判断demuxer是否已经添加该流
+        virtual void removeStreamType(StreamType type) = 0;
+        // 获取信息
+        virtual std::string getCurrentUrl() const = 0;
+        virtual AVFormatContext* getFormatContext() const = 0;
+        virtual StreamTypes getStreamTypes() const = 0;
+        virtual StreamTypes getOrFindStreamTypes() = 0;
+        virtual StreamTypes findStreamTypes() const = 0;
+        // StreamContext
+        virtual StreamIndexType getStreamIndex(StreamType type) const = 0;
+        virtual size_t getMaxPacketQueueSize(StreamType type) const = 0;
+        virtual size_t getMinPacketQueueSize(StreamType type) const = 0;
+        virtual ConcurrentQueue<AVPacket*>* getPacketQueue(StreamType type) = 0;
+
+        // 高级api
+        virtual void openAndSelectStreams(const std::string& url, StreamTypes streams, StreamIndexSelector selector);
+        // 启动解复用器
+        // \param stopCondition 停止条件回调函数，返回true表示需要停止解复用器
+        // \param packetEnqueueCallback 每次成功入队一个AVPacket后调用的回调函数，回调调用时将暂停解码
+        virtual void start() = 0; // 创建读取线程，启动解复用器
+        virtual void stop() = 0; // 停止解复用器
+        virtual void waitStop() = 0; // 等待解复用器停止
+        // 暂停解复用器，专用于暂停解码时调用
+        virtual void pause() {
+            threadStateController.disableWakeUp();
+            threadStateController.setBlockedAndWaitChanged(true);
+        }
+        // 恢复解复用器，专用于从暂停中恢复解码时调用，如果只是需要唤醒解码器请勿调用
+        virtual void resume() {
+            threadStateController.enableWakeUp();
+            threadStateController.wakeUp();
+        }
+        // 唤醒解复用器，专用于唤醒解码器使用（解码器解码过多会暂时睡眠）
+        virtual void wakeUp() {
+            threadStateController.wakeUp();
+        }
+
+        static StreamTypes findStreamTypes(AVFormatContext* fmtCtx);
+    protected:
+        Logger& logger;
+        DemuxerInterface(Logger& logger) : logger(logger) {}
+        std::string url; // 当前打开的URL
+        bool opened{ false };
+        UniquePtr<AVFormatContext> formatCtx{ nullptr, constDeleterAVFormatContext };
+        // 协调线程控制
+        ThreadStateManager::ThreadStateObj threadStateObj{ ThreadIdentifier::Demuxer };
+        ThreadStateManager::ThreadStateController threadStateController{ threadStateObj };
+    };
+
+
+    // 单线程兼容单媒体流解复用器
+    class SingleDemuxer : public DemuxerInterface {
+        const std::string loggerNameSuffix;
+        DefinePlayerLoggerSinks(singleDemuxerLoggerSinks, "SingleDemuxer_" + loggerNameSuffix);
+        Logger logger{ "SingleDemuxer_" + loggerNameSuffix, singleDemuxerLoggerSinks };
+
+        StreamIndexType streamIndex{ -1 };
+        StreamType streamType{ StreamType::STNone };
+        ConcurrentQueue<AVPacket*> packetQueue;
+        // 解复用器线程
+        std::thread demuxerThread;
+        // 包队列最大最小值
+        size_t maxPacketQueueSize = defaultMaxPacketQueueSize;
+        size_t minPacketQueueSize = defaultMinPacketQueueSize;
+        std::function<void()> packetEnqueueCallback{ nullptr }; // 每次成功入队一个AVPacket后调用的回调函数，回调调用时将暂停解码
+
+        StreamTypes foundStreamTypes{ StreamType::STNone };
+
+        AtomicBool stopped{ false };
+        AtomicWaitObject<bool> waitStopped{ true };
+
+    public:
+        explicit SingleDemuxer(const std::string& loggerNameSuffix)
+            : loggerNameSuffix(loggerNameSuffix), DemuxerInterface(logger) {}
+        explicit SingleDemuxer(const std::string& loggerNameSuffix, StreamType streamType)
+            : loggerNameSuffix(loggerNameSuffix), DemuxerInterface(logger), streamType(streamType) {}
+        ~SingleDemuxer() {
+            waitStop();
+            close();
+        }
+        // 无论流选择器是否选择了正确的流，都会遍历一遍streams参数指定的所有流类型，尽可能选择所有流对应的索引
+        virtual bool selectStreamsIndices(StreamTypes streamTypes, StreamIndexSelector selector) override;
+        /**/bool selectStreamIndex(StreamIndexSelector selector) { return selectStreamIndex(this->streamType, selector); }
+        virtual AVPacket* getOnePacket() override;
+        virtual bool readOnePacket(AVPacket** pkt = nullptr) override;
+        virtual void setMaxPacketQueueSize(StreamType type, size_t size) override { if (type == streamType) maxPacketQueueSize = size; }
+        virtual void setMinPacketQueueSize(StreamType type, size_t size) override { if (type == streamType) minPacketQueueSize = size; }
+        /*非虚函数*/void setMaxPacketQueueSize(size_t size) { maxPacketQueueSize = size; }
+        /*非虚函数*/void setMinPacketQueueSize(size_t size) { minPacketQueueSize = size; }
+        virtual void flushPacketQueue(StreamType type) override { if (type == streamType) flushPacketQueue(); }
+        /*非虚函数*/void flushPacketQueue();
+        // 仅仅重置状态，不关闭文件，不改变maxPacketQueueSize和minPacketQueueSize
+        virtual void reset() override;
+        virtual void setPacketEnqueueCallback(StreamType type, const std::function<void()>& callback) override { if (type == streamType) packetEnqueueCallback = callback; }
+        /*非虚函数*/void setPacketEnqueueCallback(const std::function<void()>& callback) { packetEnqueueCallback = callback; }
+        // 等效于setStreamType，会在selectStreams中被覆盖，所以不建议使用
+        virtual void addStreamType(StreamType type) override { streamType = type; }
+        /*非虚函数*/void setStreamType(StreamType type) { streamType = type; }
+        virtual bool isStreamTypeAdded(StreamType type) const override { if (type == streamType) return true; return false; }
+        /**/void unsetStreamType() { streamType = StreamType::STNone; }
+        /**/void removeStreamType() { streamType = StreamType::STNone; }
+        virtual void removeStreamType(StreamType type) override { if (type == streamType) streamType = StreamType::STNone; }
+
+        virtual std::string getCurrentUrl() const override { return url; }
+        /*非虚函数*/StreamIndexType getStreamIndex() const { return streamIndex; }
+        virtual StreamIndexType getStreamIndex(StreamType type) const override { if (type != streamType) return -1; return streamIndex; }
+        virtual AVFormatContext* getFormatContext() const override { return formatCtx.get(); }
+        virtual StreamTypes getStreamTypes() const override { return foundStreamTypes; }
+        virtual StreamTypes getOrFindStreamTypes() override { if (foundStreamTypes == StreamType::STNone) foundStreamTypes = findStreamTypes(); return foundStreamTypes; }
+        virtual StreamTypes findStreamTypes() const override { if (!opened || !formatCtx) /*未打开文件*/ return StreamType::STNone; return DemuxerInterface::findStreamTypes(formatCtx.get()); }
+        virtual size_t getMaxPacketQueueSize(StreamType type) const override { if (type != streamType) return 0; return maxPacketQueueSize; }
+        virtual size_t getMinPacketQueueSize(StreamType type) const override { if (type != streamType) return 0; return minPacketQueueSize; }
+        virtual ConcurrentQueue<AVPacket*>* getPacketQueue(StreamType type) override { if (type != streamType) return nullptr; return &packetQueue; }
+        /*非虚函数*/ConcurrentQueue<AVPacket*>& getPacketQueue() { return packetQueue; }
+        // 高级api
+        virtual void start() override {
+            stopped.set(false);
+            demuxerThread = std::thread(&SingleDemuxer::readPackets, this, packetEnqueueCallback);
+        }
+        virtual void stop() override {
+            stopped.set(true);
+            threadStateController.enableWakeUp();
+            threadStateController.wakeUp();
+            waitStopped.wait(true);
+        }
+        virtual void waitStop() override { if (demuxerThread.joinable()) demuxerThread.join(); /*等待解复用线程退出*/ }
+    private:
+        bool selectStreamIndex(StreamType streamType, StreamIndexSelector selector);
+
+        bool shouldStop() const {
+            return stopped.load();
+        }
+        void readPackets(std::function<void()> packetEnqueueCallback); // 读取包线程函数
+    };
+
+    // 一体解复用器
+    class UnifiedDemuxer : public DemuxerInterface {
+        const std::string loggerNameSuffix;
+        DefinePlayerLoggerSinks(singleDemuxerLoggerSinks, "UnifiedDemuxer_" + loggerNameSuffix);
+        Logger logger{ "UnifiedDemuxer_" + loggerNameSuffix, singleDemuxerLoggerSinks };
+
+        std::unordered_map<StreamType, StreamContext> streamContexts;
+        // 解复用器线程
+        //std::unordered_map<StreamType, std::thread> demuxerThreads;
+        std::thread demuxerThread;
+
+        StreamTypes foundStreamTypes{ StreamType::STNone };
+
+        const std::vector<StreamType> packetQueueSizeOrder{
+            StreamType::STVideo,
+            StreamType::STAudio,
+            StreamType::STSubtitle,
+            StreamType::STData,
+            StreamType::STAttachment,
+        };
+        // 协调控制（start/waitStop)
+        AtomicBool started{ false };
+        AtomicBool joined{ false };
+        Mutex mtxDemuxerStartStop;
+        AtomicBool stopped{ false };
+        AtomicWaitObject<bool> waitStopped{ true };
+    public:
+        explicit UnifiedDemuxer(const std::string& loggerNameSuffix)
+            : loggerNameSuffix(loggerNameSuffix), DemuxerInterface(logger) {}
+        explicit UnifiedDemuxer(const std::string& loggerNameSuffix, const std::vector<StreamType>& streamTypes)
+            : loggerNameSuffix(loggerNameSuffix), DemuxerInterface(logger) {
+            addStreamTypes(streamTypes);
+        }
+        ~UnifiedDemuxer() {
+            waitStop();
+            close();
+        }
+        // 无论流选择器是否选择了正确的流，都会遍历一遍streams参数指定的所有流类型，尽可能选择所有流对应的索引
+        virtual bool selectStreamsIndices(StreamTypes streams, StreamIndexSelector selector) override;
+        virtual bool readOnePacket(AVPacket** pkt = nullptr) override;
+        virtual AVPacket* getOnePacket() override;
+        virtual void setMaxPacketQueueSize(StreamType type, size_t size) override { auto it = streamContexts.find(type); if (it != streamContexts.end()) it->second.maxPacketQueueSize = size; }
+        virtual void setMinPacketQueueSize(StreamType type, size_t size) override { auto it = streamContexts.find(type); if (it != streamContexts.end()) it->second.minPacketQueueSize = size; }
+        virtual void flushPacketQueue(StreamType type) override;
+        // 仅仅重置状态，不关闭文件，不改变maxPacketQueueSize和minPacketQueueSize
+        virtual void reset() override;
+        // 调用此函数需确保type流已存在，即已调用addStreamContext/调用构造函数添加该流
+        virtual void setPacketEnqueueCallback(StreamType type, const std::function<void()>& callback) override {
+            auto it = streamContexts.find(type);
+            if (it != streamContexts.end())
+                it->second.packetEnqueueCallback = callback;
+        }
+        virtual void addStreamType(StreamType type) override {
+            //if (streamContexts.count(type)) return; // 已存在
+            streamContexts.try_emplace(type, type); // key, construct arguments, ...
+        }
+        /*非虚函数*/void addStreamTypes(const std::vector<StreamType>& types) {
+            for (auto type : types)
+                addStreamType(type);
+        }
+        virtual bool isStreamTypeAdded(StreamType type) const override { if (streamContexts.count(type)) return true; return false; }
+        virtual void removeStreamType(StreamType type) override {
+            auto it = streamContexts.find(type);
+            if (it != streamContexts.end())
+                streamContexts.erase(it);
+        }
+
+        virtual std::string getCurrentUrl() const override { return url; }
+        virtual StreamIndexType getStreamIndex(StreamType type) const override { auto it = streamContexts.find(type); if (it == streamContexts.end()) return -1; return it->second.index; }
+        virtual AVFormatContext* getFormatContext() const override { return formatCtx.get(); }
+        virtual StreamTypes getStreamTypes() const override { return foundStreamTypes; }
+        virtual StreamTypes getOrFindStreamTypes() override { if (foundStreamTypes == StreamType::STNone) foundStreamTypes = findStreamTypes(); return foundStreamTypes; }
+        virtual StreamTypes findStreamTypes() const override { if (!opened || !formatCtx) /*未打开文件*/ return StreamType::STNone; return DemuxerInterface::findStreamTypes(formatCtx.get()); }
+        virtual size_t getMaxPacketQueueSize(StreamType type) const override { auto it = streamContexts.find(type); if (it != streamContexts.end()) return it->second.maxPacketQueueSize; return defaultMaxPacketQueueSize; }
+        virtual size_t getMinPacketQueueSize(StreamType type) const override { auto it = streamContexts.find(type); if (it != streamContexts.end()) return it->second.minPacketQueueSize; return defaultMinPacketQueueSize; }
+        virtual ConcurrentQueue<AVPacket*>* getPacketQueue(StreamType type) override { auto it = streamContexts.find(type); if (it != streamContexts.end()) return &it->second.packetQueue; return nullptr; }
+        // 高级api
+        // 创建读取线程，启动解复用器，仅初次调用有效，直到线程结束
+        virtual void start() override {
+            std::lock_guard lock(mtxDemuxerStartStop);
+            if (started.load()) return;
+            stopped.set(false);
+            started.store(true);
+            joined.store(false);
+            //for (auto& [key, streamCtx] : streamContexts)
+            //    demuxerThreads.try_emplace(key, &UnifiedDemuxer::readPackets, this, &streamCtx, stopCondition);
+            demuxerThread = std::thread(
+                //static_cast<void(UnifiedDemuxer::*)(std::function<bool()>)>(&UnifiedDemuxer::readPackets), this, stopCondition
+                [this]() {
+                    this->readPackets();
+                    std::unique_lock lock(mtxDemuxerStartStop);
+                    started.store(false);
+                }
+            );
+        }
+        virtual void stop() override {
+            std::lock_guard lock(mtxDemuxerStartStop);
+            if (!started.load()) return;
+            stopped.set(true);
+            threadStateController.enableWakeUp();
+            threadStateController.wakeUp();
+            waitStopped.wait(true);
+        }
+        // 仅初次调用有效，直到线程结束
+        virtual void waitStop() override {
+            std::unique_lock lock(mtxDemuxerStartStop);
+            if (joined.load()) return;
+            joined.store(true);
+            lock.unlock();
+            //for (auto& [key, demuxerThread] : demuxerThreads)
+            if (demuxerThread.joinable())
+                demuxerThread.join(); // 等待解复用线程退出
+            lock.lock();
+            started.store(false);
+            joined.store(false);
+        }
+    private:
+        bool shouldStop() const {
+            return stopped.load();
+        }
+        ///*非虚函数*/void readPackets(StreamContext* streamCtx, std::function<bool()> stopCondition); // 读取包线程函数
+        /*非虚函数*/void readPackets(); // 读取包线程函数
+    };
 
 };
-
 
 class MediaDecodeUtils : public PlayerTypes
 {
 private:
 public:
-    static bool openFile(Logger* logger, AVFormatContext*& fmtCtx, const std::string& filePath)
-    {
-        if (filePath.empty())
-        {
-            logger->error("File path is empty.");
-            return false;
-        }
-        // 打开输入文件
-        fmtCtx = nullptr;
-        if (avformat_open_input(&fmtCtx, filePath.c_str(), nullptr, nullptr) < 0)
-        {
-            logger->error("Cannot open file: {}", filePath.c_str());
-            return false;
-        }
-        return true;
-    }
-    static bool openFile(Logger* logger, UniquePtr<AVFormatContext>& fmtCtx, const std::string& filePath)
-    {
-        AVFormatContext* p = nullptr;
-        bool rst = openFile(logger, p, filePath);
-        fmtCtx.reset(p);
-        return rst;
-    }
-
-    static bool findStreamInfo(Logger* logger, AVFormatContext* formatCtx)
-    {
-        if (avformat_find_stream_info(formatCtx, nullptr) < 0)
-        {
-            logger->error("Cannot find stream info.");
-            return false;
-        }
-        return true;
-    }
-
-    static bool readFrame(Logger* logger, AVFormatContext* fmtCtx, AVPacket*& packet, bool allocPacket = true, bool* isEof = nullptr)
-    {
-        if (allocPacket)
-            packet = av_packet_alloc();
-        if (!packet)
-        {
-            logger->error("AVPacket is null.");
-            return false;
-        }
-        int ret = av_read_frame(fmtCtx, packet);
-        if (ret < 0)
-        {
-            if (allocPacket)
-            { // 只有在函数内部分配的packet才需要释放
-                av_packet_free(&packet);
-                packet = nullptr;
-            }
-            if (ret == AVERROR_EOF)
-            {
-                // 读取到文件末尾
-                if (isEof)
-                    *isEof = true;
-                logger->trace("Reached end of file.");
-                return false;
-            }
-            else
-            {
-                if (isEof)
-                    *isEof = false;
-                logger->error("Error reading frame: {}", ret);
-                return false;
-            }
-        }
-        else
-        {
-            if (isEof)
-                *isEof = true;
-        }
-        return true;
-    }
-
-    static bool findAndOpenAudioDecoder(Logger* logger, AVFormatContext* formatCtx, StreamIndexType streamIndex, UniquePtr<AVCodecContext>& codecContext)
-    {
-        auto* codecPar = formatCtx->streams[streamIndex]->codecpar;
-        // 对每个流都尝试初始化解码器
-        const AVCodec* codec = avcodec_find_decoder(codecPar->codec_id); // 查找解码器，不需要手动释放
-        if (!codec)
-        {
-            logger->error("Cannot find audio decoder.");
-            return false;
-        }
-        auto* codecCtx = avcodec_alloc_context3(codec);
-        UniquePtr<AVCodecContext> uniquePtr(codecCtx, constDeleterAVCodecContext);
-        if (avcodec_parameters_to_context(codecCtx, codecPar) < 0)
-        {
-            logger->error("Cannot copy audio decoder parameters to context.");
-            return false;
-        }
-        if (avcodec_open2(codecCtx, codec, nullptr) < 0)
-        {
-            logger->error("Cannot open audio decoder.");
-            return false;
-        }
-        uniquePtr.release();
-        codecContext.reset(codecCtx);
-        return true;
-    }
-
-    static bool findAndOpenVideoDecoder(Logger* logger, AVFormatContext* formatCtx, StreamIndexType streamIndex, UniquePtr<AVCodecContext>& codecContext, bool useHardwareDecoder = false, AVHWDeviceType* hwDeviceType = nullptr, AVPixelFormat* hwPixelFormat = nullptr) {
-        auto* videoCodecPar = formatCtx->streams[streamIndex]->codecpar;
-        // 对每个视频流都尝试初始化解码器
-        const AVCodec* videoCodec = avcodec_find_decoder(videoCodecPar->codec_id); // 查找解码器，不需要手动释放
-        if (!videoCodec)
-        {
-            logger->error("Cannot find video decoder.");
-            return false;
-        }
-        auto* videoCodecCtx = avcodec_alloc_context3(videoCodec);
-        UniquePtr<AVCodecContext> uniquePtr(videoCodecCtx, constDeleterAVCodecContext);
-        if (avcodec_parameters_to_context(videoCodecCtx, videoCodecPar) < 0)
-        {
-            logger->error("Cannot copy video decoder parameters to context.");
-            return false;
-        }
-        if (useHardwareDecoder)
-        {
-            // 初始化硬件解码器与媒体相关的只需要用到videoCodecCtx变量，但是会使用hwDeviceType变量作为目标硬件类型
-            auto type = findHardwareDecoder(logger, videoCodec, AV_HWDEVICE_TYPE_NONE, *hwDeviceType, *hwPixelFormat);
-            while (!initHardwareDecoder(logger, videoCodecCtx, *hwDeviceType) && type != AV_HWDEVICE_TYPE_NONE)
-            {
-                if (videoCodecCtx->hw_device_ctx)
-                {
-                    av_buffer_unref(&videoCodecCtx->hw_device_ctx);
-                    videoCodecCtx->hw_device_ctx = nullptr;
-                }
-                type = findHardwareDecoder(logger, videoCodec, type, *hwDeviceType, *hwPixelFormat);
-            }
-            if (type == AV_HWDEVICE_TYPE_NONE)
-                logger->warning("Hardware decoder not supported, using software instead.");
-        }
-        if (avcodec_open2(videoCodecCtx, videoCodec, nullptr) < 0)
-        {
-            logger->error("Cannot open decoder");
-            return false;
-        }
-        codecContext.reset(uniquePtr.release()); // 先构造智能指针放入，失败时再弹出，届时自动释放上下文内存
-        return true;
-    }
-    static void listAllHardwareDecoders(Logger* logger)
-    {
-        // 列举所有支持的硬件解码器类型
-        AVHWDeviceType type = AV_HWDEVICE_TYPE_NONE;
-        logger->info("Find hardware decoders:");
-        for (size_t i = 1; (type/*current type*/ = av_hwdevice_iterate_types(type/*previous type*/)) != AV_HWDEVICE_TYPE_NONE; ++i)
-        {
-            logger->info("\t decoder {}: {}", i, av_hwdevice_get_type_name(type));
-        }
-    }
-
+    static bool openFile(Logger* logger, AVFormatContext*& fmtCtx, const std::string& filePath);
+    static bool openFile(Logger* logger, UniquePtr<AVFormatContext>& fmtCtx, const std::string& filePath);
+    static void closeFile(Logger* logger, AVFormatContext*& fmtCtx);
+    static void closeFile(Logger* logger, UniquePtr<AVFormatContext>& fmtCtx);
+    static bool findStreamInfo(Logger* logger, AVFormatContext* formatCtx);
+    static bool readFrame(Logger* logger, AVFormatContext* fmtCtx, AVPacket*& packet, bool allocPacket = true, bool* isEof = nullptr);
+    static bool findAndOpenAudioDecoder(Logger* logger, AVFormatContext* formatCtx, StreamIndexType streamIndex, UniquePtr<AVCodecContext>& codecContext);
+    static bool findAndOpenVideoDecoder(Logger* logger, AVFormatContext* formatCtx, StreamIndexType streamIndex, UniquePtr<AVCodecContext>& codecContext, bool useHardwareDecoder = false, AVHWDeviceType* hwDeviceType = nullptr, AVPixelFormat* hwPixelFormat = nullptr);
+    static void listAllHardwareDecoders(Logger* logger);
     // fromType 表示从AVHWDeviceType的哪一个的下一个开始遍历查找
     // hwDeviceType与hwPixelFormat为输出
-    static AVHWDeviceType findHardwareDecoder(Logger* logger, const AVCodec* codec, AVHWDeviceType fromType, AVHWDeviceType& hwDeviceType, AVPixelFormat& hwPixelFormat)
-    {
-        AVHWDeviceType selectedHWDeviceType = AV_HWDEVICE_TYPE_NONE;
-        AVPixelFormat selectedHWPixelFormat = AV_PIX_FMT_NONE;
-        for (AVHWDeviceType type = fromType; (type/*current type*/ = av_hwdevice_iterate_types(type/*previous type*/)) != AV_HWDEVICE_TYPE_NONE; )
-        {
-            bool found = false;
-            for (size_t i = 0; ; ++i)
-            {
-                const AVCodecHWConfig* config = avcodec_get_hw_config(codec, i);
-                if (!config)
-                {
-                    logger->info("Decoder {} does not support device type {}.", codec->name, av_hwdevice_get_type_name(type));
-                    break;
-                }
-                if (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX && config->device_type == type)
-                {
-                    selectedHWPixelFormat = config->pix_fmt;
-                    selectedHWDeviceType = type; // 选择第一个可用的硬件解码器类型
-                    logger->info("Decoder {} supports device type {} with pixel format {}.", codec->name, av_hwdevice_get_type_name(type), static_cast<std::underlying_type_t<AVPixelFormat>>(selectedHWPixelFormat));
-                    found = true;
-                    break;
-                }
-            }
-            if (found)
-                break;
-        }
-        hwDeviceType = selectedHWDeviceType;
-        hwPixelFormat = selectedHWPixelFormat;
-        return selectedHWDeviceType;
-    }
-
+    static AVHWDeviceType findHardwareDecoder(Logger* logger, const AVCodec* codec, AVHWDeviceType fromType, AVHWDeviceType& hwDeviceType, AVPixelFormat& hwPixelFormat);
     // 会初始化并设置codecCtx的hw_device_ctx成员
-    static bool initHardwareDecoder(Logger* logger, AVCodecContext* codecCtx, AVHWDeviceType hwDeviceType)
-    {
-        AVBufferRef* hwDeviceCtx = nullptr;
-        if (av_hwdevice_ctx_create(&hwDeviceCtx, hwDeviceType, nullptr, nullptr, 0) < 0)
-        {
-            logger->error("Cannot create hardware context.");
-            return false;
-        }
-        if (av_hwdevice_ctx_init(hwDeviceCtx) < 0)
-        {
-            logger->error("Cannot initialize hardware context.");
-            if (hwDeviceCtx)
-                av_buffer_unref(&hwDeviceCtx);
-            return false;
-        }
-        codecCtx->hw_device_ctx = hwDeviceCtx; // 创建的时候自动添加了一次引用，这里只需要指针赋值，因为局部变量hwDeviceCtx不再使用
-        return true;
-    }
-
+    static bool initHardwareDecoder(Logger* logger, AVCodecContext* codecCtx, AVHWDeviceType hwDeviceType);
 };
-
-// 定义播放器日志槽列表
-#define DefinePlayerLoggerSinks(variableName, fileLoggerNameIfNeeded) \
-const std::vector<LoggerSinkPtr> variableName{ \
-    std::make_shared<ConsoleLoggerSink>(), \
-    std::make_shared<FileLoggerSink>(fileLoggerNameIfNeeded), \
-    /*End*/}
-/////
 
 class ConcurrentQueueOps
 {
@@ -834,9 +1055,32 @@ class PlayerInterface : public PlayerTypes
 {
 private:
     Logger& logger;
+    friend class PlayerTypes;
 private:
     void playbackStateChangeEventHandler(MediaPlaybackStateChangeEvent* e);
     void requestHandleEventHandler(MediaRequestHandleEvent* e);
+public:
+    struct PlayerContext {
+        // 解复用器
+        StreamType demuxerStreamType{ StreamType::STVideo };
+        SharedPtr<DemuxerInterface> demuxer{ nullptr };
+        AVFormatContext* formatCtx{ nullptr };
+        StreamIndexType streamIndex{ -1 };
+        ConcurrentQueue<AVPacket*>* packetQueue{ nullptr };
+
+        ConcurrentQueue<AVFrame*> frameQueue;
+        UniquePtr<AVCodecContext> codecCtx{ nullptr, constDeleterAVCodecContext };
+
+        // 时钟
+        AtomicDouble clock{ 0.0 }; // 单位s
+        AtomicBool isClockStable{ false }; // 时钟是否稳定
+        // 系统时钟
+        double realtimeClock{ 0.0 };
+    };
+    void requestTaskHandlerSeek(
+        AVFormatContext* formatCtx, std::vector<AVCodecContext*> codecCtxList,
+        std::function<void(PlayerState)> playerStateSetter, std::function<void()> clearPktAndFrameQueuesFunc,
+        MediaRequestHandleEvent* e, std::any userData);
 public:
     PlayerInterface(Logger& logger) : logger(logger) {}
     virtual ~PlayerInterface() = default;
@@ -850,11 +1094,18 @@ public:
     virtual bool isPlaying() const = 0;
     virtual bool isPaused() const = 0;
     virtual bool isStopped() const = 0;
+    virtual PlayerState getPlayerState() const = 0;
     virtual void setFilePath(const std::string& filePath) = 0;
     virtual std::string getFilePath() const = 0;
     //virtual void setStreamIndexSelector(const StreamIndexSelector& selector) = 0;
     //virtual void setVolume(double volume) = 0;
-    
+    virtual void setDemuxerMode(ComponentWorkMode mode) = 0;
+    virtual ComponentWorkMode getDemuxerMode() const = 0;
+    virtual void setExternalDemuxer(const SharedPtr<UnifiedDemuxer>& demuxer) = 0;
+    virtual void setRequestTaskQueueHandlerMode(ComponentWorkMode mode) = 0;
+    virtual ComponentWorkMode getRequestTaskQueueHandlerMode() const = 0;
+    virtual void setExternalRequestTaskQueueHandler(const SharedPtr<RequestTaskQueueHandler>& handler) = 0;
+
     // 方法一
     //virtual void addEventHandler(size_t handlerId, std::function<void(const MediaEventType& eventType, const std::any& eventData)> handler) = 0;
     //virtual void removeEventHandler(size_t handlerId) = 0;
@@ -865,7 +1116,7 @@ protected:
     virtual bool event(MediaEvent* e);
     // 播放状态改变事件（重写该方法不会影响其子事件（start,pause,resume,stop）的事件分发）
     virtual void playbackStateChangeEvent(MediaPlaybackStateChangeEvent* e) {}
-    // 已经开始播放事件（启动读取解码渲染线程前），隶属于播放状态改变事件
+    // 已经开始播放事件（启动解码渲染线程前），隶属于播放状态改变事件
     virtual void startEvent(MediaPlaybackStateChangeEvent* e) {}
     // 暂停播放事件，隶属于播放状态改变事件
     virtual void pauseEvent(MediaPlaybackStateChangeEvent* e) {}
@@ -880,3 +1131,4 @@ protected:
     virtual void seekEvent(MediaSeekEvent* e) {}
 
 };
+

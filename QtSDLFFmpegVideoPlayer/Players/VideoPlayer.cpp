@@ -3,25 +3,59 @@
 bool VideoPlayer::playVideoFile()
 {
     waitStopped.set(false);
-    // 打开文件
-    if (!openInput())
-    {
-        resetPlayer();
-        return false;
+    auto demuxerMode = this->demuxerMode;
+    auto requestTaskQueueHandlerMode = this->requestTaskQueueHandlerMode;
+    // 初始化解复用器
+    try {
+        auto& psv = playbackStateVariables;
+        if (demuxerMode == ComponentWorkMode::Internal)
+        {
+            psv.demuxer = internalDemuxer;
+            psv.demuxer->setPacketEnqueueCallback(playbackStateVariables.demuxerStreamType, std::bind(&VideoPlayer::packetEnqueueCallback, this));
+            psv.demuxer->openAndSelectStreams(psv.filePath, psv.demuxerStreamType, psv.playOptions.streamIndexSelector);
+        }
+        else/* if (demuxerMode == DemuxerMode::External)*/
+            psv.demuxer = externalDemuxer;
+        if (!psv.demuxer) // 解复用器不存在，通常为外部解复用器指针为空
+            throw std::runtime_error("Demuxer is nullptr.");
+        psv.formatCtx = psv.demuxer->getFormatContext();
+        psv.streamIndex = psv.demuxer->getStreamIndex(psv.demuxerStreamType);
+        psv.packetQueue = psv.demuxer->getPacketQueue(psv.demuxerStreamType);
+
+        if (requestTaskQueueHandlerMode == ComponentWorkMode::Internal)
+        {
+            psv.requestQueueHandler = internalRequestTaskQueueHandler.get();
+            addThreadStateHandlersContext(internalRequestTaskQueueHandler.get());
+        }
+        else
+            psv.requestQueueHandler = externalRequestTaskQueueHandler;
+        if (!psv.requestQueueHandler) // 请求任务队列处理器不存在，通常为外部请求任务队列处理器指针为空
+            throw std::runtime_error("RequestTaskQueueHandler is nullptr.");
     }
-    // 查找流信息
-    if (!findStreamInfo())
-    {
+    catch (std::runtime_error e) {
+        logger.error("Failed to open and select streams: {}", e.what());
         resetPlayer();
         return false;
     }
 
-    // 查找并选择视频流
-    if (!findAndSelectVideoStream())
-    {
-        resetPlayer();
-        return false;
-    }
+    //// 打开文件
+    //if (!openInput())
+    //{
+    //    resetPlayer();
+    //    return false;
+    //}
+    //// 查找流信息
+    //if (!findStreamInfo())
+    //{
+    //    resetPlayer();
+    //    return false;
+    //}
+    //// 查找并选择视频流
+    //if (!findAndSelectVideoStream())
+    //{
+    //    resetPlayer();
+    //    return false;
+    //}
 
     // 寻找并打开解码器
     if (!findAndOpenVideoDecoder())
@@ -32,22 +66,27 @@ bool VideoPlayer::playVideoFile()
 
     setPlayerState(PlayerState::Playing);
     // 启动处理线程
-    std::thread threadRequestTaskProcessor(&VideoPlayer::requestTaskProcessor, this);
+    if (requestTaskQueueHandlerMode == ComponentWorkMode::Internal)
+        playbackStateVariables.requestQueueHandler->start();
     // 启动读包
-    std::thread threadReadPackets(&VideoPlayer::readPackets, this);
+    //std::thread threadReadPackets(&VideoPlayer::readPackets, this);
+    if (demuxerMode == ComponentWorkMode::Internal)
+        playbackStateVariables.demuxer->start(); // 启动解复用器读取线程
     // 启动包转视频流
     std::thread threadPacket2VideoFrames(&VideoPlayer::packet2VideoFrames, this);
     // 启动渲染视频
     std::thread threadRenderVideo(&VideoPlayer::renderVideo, this);
     // 等待线程结束
-    if (threadRequestTaskProcessor.joinable())
-        threadRequestTaskProcessor.join();
-    if (threadReadPackets.joinable())
-        threadReadPackets.join();
+    if (requestTaskQueueHandlerMode == ComponentWorkMode::Internal)
+        playbackStateVariables.requestQueueHandler->waitStop();
+    //if (threadReadPackets.joinable())
+    //    threadReadPackets.join();
     if (threadPacket2VideoFrames.joinable())
         threadPacket2VideoFrames.join();
     if (threadRenderVideo.joinable())
         threadRenderVideo.join();
+    if (demuxerMode == ComponentWorkMode::Internal)
+        playbackStateVariables.demuxer->waitStop(); // 等待解复用器停止
     // 恢复播放器状态
     resetPlayer();
     // 通知停止
@@ -55,32 +94,32 @@ bool VideoPlayer::playVideoFile()
     return true;
 }
 
-bool VideoPlayer::findAndSelectVideoStream()
-{
-    std::vector<StreamIndexType> streamIndicesList;
-    // 查找视频流和音频流
-    for (size_t i = 0; i < playbackStateVariables.formatCtx->nb_streams; ++i)
-        if (playbackStateVariables.formatCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
-            streamIndicesList.emplace_back(i);
-    StreamIndexType si = -1;
-    auto& streamIndexSelector = playbackStateVariables.playOptions.streamIndexSelector;
-    if (!streamIndexSelector)
-        return false;
-    bool rst = streamIndexSelector(si, MediaType::Video, streamIndicesList, playbackStateVariables.formatCtx.get(), playbackStateVariables.codecCtx.get());
-    if (rst)
-    {
-        if (si >= 0 && si < static_cast<StreamIndexType>(playbackStateVariables.formatCtx->nb_streams))
-            playbackStateVariables.streamIndex = si;
-        else
-            playbackStateVariables.streamIndex = -1;
-    }
-    return rst;
-}
+//bool VideoPlayer::findAndSelectVideoStream()
+//{
+//    std::vector<StreamIndexType> streamIndicesList;
+//    // 查找视频流和音频流
+//    for (size_t i = 0; i < playbackStateVariables.formatCtx->nb_streams; ++i)
+//        if (playbackStateVariables.formatCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
+//            streamIndicesList.emplace_back(i);
+//    StreamIndexType si = -1;
+//    auto& streamIndexSelector = playbackStateVariables.playOptions.streamIndexSelector;
+//    if (!streamIndexSelector)
+//        return false;
+//    bool rst = streamIndexSelector(si, StreamType::STVideo, streamIndicesList, playbackStateVariables.formatCtx.get(), playbackStateVariables.codecCtx.get());
+//    if (rst)
+//    {
+//        if (si >= 0 && si < static_cast<StreamIndexType>(playbackStateVariables.formatCtx->nb_streams))
+//            playbackStateVariables.streamIndex = si;
+//        else
+//            playbackStateVariables.streamIndex = -1;
+//    }
+//    return rst;
+//}
 
 bool VideoPlayer::findAndOpenVideoDecoder()
 {
     bool useHardwareDecoding = playbackStateVariables.playOptions.enableHardwareDecoding;
-    auto rst = MediaDecodeUtils::findAndOpenVideoDecoder(&logger, playbackStateVariables.formatCtx.get(), playbackStateVariables.streamIndex, playbackStateVariables.codecCtx, useHardwareDecoding, &playbackStateVariables.hwDeviceType, &playbackStateVariables.hwPixelFormat);
+    auto rst = MediaDecodeUtils::findAndOpenVideoDecoder(&logger, playbackStateVariables.formatCtx, playbackStateVariables.streamIndex, playbackStateVariables.codecCtx, useHardwareDecoding, &playbackStateVariables.hwDeviceType, &playbackStateVariables.hwPixelFormat);
     if (!useHardwareDecoding)
     {
         playbackStateVariables.hwDeviceType = AV_HWDEVICE_TYPE_NONE;
@@ -89,61 +128,61 @@ bool VideoPlayer::findAndOpenVideoDecoder()
     return rst;
 }
 
-void VideoPlayer::readPackets()
-{
-    auto& threadStateManager = playbackStateVariables.threadStateManager;
-    auto&& waitObj = threadStateManager.addThread(ThreadIdentifier::VideoReadingThread);
-    ThreadStateManager::AutoRemovedThreadObj autoRemoveWaitObj{ threadStateManager, waitObj };
-    // 视频解码和显示循环
-    while (true)
-    {
-        if (waitObj.isBlocking())
-            waitObj.block();
-
-        if (playerState == PlayerState::Stopping || playerState == PlayerState::Stopped)
-            break;
-        auto oldPktQueueSize = getQueueSize(playbackStateVariables.packetQueue);
-        if (oldPktQueueSize >= MAX_VIDEO_PACKET_QUEUE_SIZE)
-        {
-            waitObj.pause();
-            continue;
-        }
-        // Read frame from the format context 读取帧
-        AVPacket* pkt = nullptr;
-        if (!MediaDecodeUtils::readFrame(&logger, playbackStateVariables.formatCtx.get(), pkt, true))
-        {
-            if (pkt)
-                av_packet_free(&pkt); // 释放包
-            logger.trace("Read frame finished.");
-            //break; // 读取结束，退出循环
-            // 读取结束，暂停线程，等待通知
-            waitObj.pause();
-            continue;
-        }
-        if (pkt->stream_index != playbackStateVariables.streamIndex)
-        {
-            av_packet_free(&pkt); // 释放不需要的包
-            continue;
-        }
-        enqueue(playbackStateVariables.packetQueue, pkt);
-        logger.trace("Pushed video packet, queue size: {}", oldPktQueueSize + 1);
-        if (oldPktQueueSize + 1 <= MIN_VIDEO_PACKET_QUEUE_SIZE)
-            threadStateManager.wakeUpById(ThreadIdentifier::VideoDecodingThread);
-    }
-}
+//void VideoPlayer::readPackets()
+//{
+//    auto& threadStateManager = playbackStateVariables.threadStateManager;
+//    auto&& waitObj = threadStateManager.addThread(ThreadIdentifier::ReadingThread);
+//    ThreadStateManager::AutoRemovedThreadObj autoRemoveWaitObj{ threadStateManager, waitObj };
+//    // 视频解码和显示循环
+//    while (true)
+//    {
+//        if (waitObj.isBlocking())
+//            waitObj.block();
+//
+//        if (shouldStop())
+//            break;
+//        auto oldPktQueueSize = getQueueSize(playbackStateVariables.packetQueue);
+//        if (oldPktQueueSize >= MAX_VIDEO_PACKET_QUEUE_SIZE)
+//        {
+//            waitObj.pause();
+//            continue;
+//        }
+//        // Read frame from the format context 读取帧
+//        AVPacket* pkt = nullptr;
+//        if (!MediaDecodeUtils::readFrame(&logger, playbackStateVariables.formatCtx.get(), pkt, true))
+//        {
+//            if (pkt)
+//                av_packet_free(&pkt); // 释放包
+//            logger.trace("Read frame finished.");
+//            //break; // 读取结束，退出循环
+//            // 读取结束，暂停线程，等待通知
+//            waitObj.pause();
+//            continue;
+//        }
+//        if (pkt->stream_index != playbackStateVariables.streamIndex)
+//        {
+//            av_packet_free(&pkt); // 释放不需要的包
+//            continue;
+//        }
+//        enqueue(playbackStateVariables.packetQueue, pkt);
+//        logger.trace("Pushed video packet, queue size: {}", oldPktQueueSize + 1);
+//        if (oldPktQueueSize + 1 <= MIN_VIDEO_PACKET_QUEUE_SIZE)
+//            threadStateManager.wakeUpById(ThreadIdentifier::DecodingThread);
+//    }
+//}
 
 // 视频包解码线程函数
 void VideoPlayer::packet2VideoFrames()
 {
     auto& threadStateManager = playbackStateVariables.threadStateManager;
-    auto&& waitObj = threadStateManager.addThread(ThreadIdentifier::VideoDecodingThread);
+    auto&& waitObj = threadStateManager.addThread(ThreadIdentifier::Decoder);
     ThreadStateManager::AutoRemovedThreadObj autoRemoveWaitObj{ threadStateManager, waitObj };
     while (true)
     {
         if (waitObj.isBlocking())
             waitObj.block();
 
-        if (playerState == PlayerState::Stopping || playerState == PlayerState::Stopped) // 收到停止信号，退出循环
+        if (shouldStop()) // 收到停止信号，退出循环
             break;
         else if (playerState != PlayerState::Playing)
         {
@@ -155,18 +194,18 @@ void VideoPlayer::packet2VideoFrames()
             waitObj.pause(); // 如果视频帧队列中有太多数据，等待消费掉一些再继续解码
             continue;
         }
-        if (getQueueSize(playbackStateVariables.packetQueue) < MIN_VIDEO_PACKET_QUEUE_SIZE)
-            threadStateManager.wakeUpById(ThreadIdentifier::VideoReadingThread);
+        if (getQueueSize(*playbackStateVariables.packetQueue) < MIN_VIDEO_PACKET_QUEUE_SIZE)
+            playbackStateVariables.demuxer->wakeUp(); // 包队列数据过少，唤醒解复用器读取更多数据
         // 取出视频包
         AVPacket* videoPkt = nullptr;
-        if (!tryDequeue(playbackStateVariables.packetQueue, videoPkt))
+        if (!tryDequeue(*playbackStateVariables.packetQueue, videoPkt))
         {
             waitObj.pause(); // 队列为空，先暂停线程
             continue; // 少了这句就会出现空包
         }
         if (!videoPkt) // 一定要过滤空包，否则avcodec_send_packet将会设置为EOF，之后将无法继续解包
             continue;
-        logger.trace("Got video packet, current video packet queue size: {}", getQueueSize(playbackStateVariables.packetQueue));
+        logger.trace("Got video packet, current video packet queue size: {}", getQueueSize(*playbackStateVariables.packetQueue));
         UniquePtr<AVPacket> pktPtr{ videoPkt, constDeleterAVPacket };
         int aspRst = avcodec_send_packet(playbackStateVariables.codecCtx.get(), videoPkt);
         if (aspRst < 0 && aspRst != AVERROR(EAGAIN) && aspRst != AVERROR_EOF)
@@ -177,7 +216,7 @@ void VideoPlayer::packet2VideoFrames()
             enqueue(playbackStateVariables.frameQueue, av_frame_clone(frame.get())); // 放入待渲染队列
             // 通知渲染线程继续工作
             if (getQueueSize(playbackStateVariables.frameQueue) <= MIN_VIDEO_FRAME_QUEUE_SIZE)
-                threadStateManager.wakeUpById(ThreadIdentifier::VideoRenderingThread);
+                threadStateManager.wakeUpById(ThreadIdentifier::Renderer);
         }
     }
 }
@@ -186,7 +225,7 @@ void VideoPlayer::packet2VideoFrames()
 void VideoPlayer::renderVideo()
 {
     auto& threadStateManager = playbackStateVariables.threadStateManager;
-    auto&& waitObj = threadStateManager.addThread(ThreadIdentifier::VideoRenderingThread);
+    auto&& waitObj = threadStateManager.addThread(ThreadIdentifier::Renderer);
     ThreadStateManager::AutoRemovedThreadObj autoRemoveWaitObj{ threadStateManager, waitObj };
 
     // 帧格式转换选项
@@ -234,7 +273,7 @@ void VideoPlayer::renderVideo()
     UniquePtr<AVFrame> rawFrame{ nullptr, constDeleterAVFrame };
     // 帧上下文
     FrameContext frameCtx;
-    frameCtx.formatCtx = playbackStateVariables.formatCtx.get();
+    frameCtx.formatCtx = playbackStateVariables.formatCtx;
     frameCtx.codecCtx = playbackStateVariables.codecCtx.get();
     frameCtx.streamIndex = playbackStateVariables.streamIndex;
 
@@ -244,7 +283,7 @@ void VideoPlayer::renderVideo()
         if (waitObj.isBlocking())
             waitObj.block();
 
-        if (playerState == PlayerState::Stopping || playerState == PlayerState::Stopped) // 收到停止信号，退出循环
+        if (shouldStop()) // 收到停止信号，退出循环
             break;
         else if (playerState != PlayerState::Playing)
         {
@@ -252,13 +291,13 @@ void VideoPlayer::renderVideo()
             continue;
         }
         if (getQueueSize(playbackStateVariables.frameQueue) < MIN_VIDEO_FRAME_QUEUE_SIZE)
-            threadStateManager.wakeUpById(ThreadIdentifier::VideoDecodingThread);
+            threadStateManager.wakeUpById(ThreadIdentifier::Decoder);
         // 从队列中取出一个视频帧进行处理
         {
             AVFrame* frame = nullptr;
             if (!tryDequeue(playbackStateVariables.frameQueue, frame))
             {
-                threadStateManager.wakeUpById(ThreadIdentifier::VideoDecodingThread);
+                threadStateManager.wakeUpById(ThreadIdentifier::Decoder);
                 waitObj.pause();
                 continue; // 队列为空，继续下一轮循环
             }
@@ -590,65 +629,6 @@ SwsContext* VideoPlayer::checkAndGetCorrectSwsContext(SizeI srcSize, AVPixelForm
     return sws;
 }
 
-void VideoPlayer::requestTaskProcessor()
-{
-    auto shouldExit = [this]() -> bool {
-        return (playerState == PlayerState::Stopping || playerState == PlayerState::Stopped);
-        };
-    auto& queueRequestTasks = playbackStateVariables.queueRequestTasks;
-    auto& mtxQueueRequestTasks = playbackStateVariables.mtxQueueRequestTasks;
-    auto& cvQueueRequestTasks = playbackStateVariables.cvQueueRequestTasks;
-    auto& threadStateManager = playbackStateVariables.threadStateManager;
-    while (true)
-    {
-        std::unique_lock lockMtxQueueRequestTasks(mtxQueueRequestTasks);
-        while (queueRequestTasks.empty())
-        {
-            if (shouldExit())
-                break;
-            cvQueueRequestTasks.wait(lockMtxQueueRequestTasks); // 等待有任务到来
-        }
-        if (shouldExit())
-            break;
-        // 处理任务
-        RequestTaskItem taskItem = queueRequestTasks.front();
-        queueRequestTasks.pop(); // 先弹出任务
-        // 构造智能指针，自动释放事件对象内存
-        UniquePtrD<MediaRequestHandleEvent> smartEvent{ taskItem.event };
-        lockMtxQueueRequestTasks.unlock();
-        // 通知需要等待的线程
-        std::vector<ThreadStateManager::ThreadStateController> waitObjs;
-        for (const auto& threadId : taskItem.blockTargetThreadIds)
-        {
-            try {
-                auto && tsc = threadStateManager.get(threadId);
-                waitObjs.push_back(tsc);
-                tsc.disableWakeUp();
-                tsc.setBlockedAndWaitChanged(true); // 等待线程阻塞
-            }
-            catch (std::exception e) {
-                logger.error("{}", e.what());
-            }
-        }
-        // 执行任务处理函数
-        auto&& requestBeforeHandleEvent = taskItem.event->clone(RequestHandleState::BeforeHandle);
-        event(requestBeforeHandleEvent.get());
-        if (requestBeforeHandleEvent->isAccepted()) // 只有被接受的任务才处理
-        {
-            if (taskItem.handler)
-                taskItem.handler(taskItem.event, taskItem.userData);
-        }
-        auto&& requestAfterHandleEvent = taskItem.event->clone(RequestHandleState::AfterHandle);
-        event(requestAfterHandleEvent.get());
-        // 通知所有暂停的线程继续运行
-        for (auto& waitObj : waitObjs)
-        {
-            waitObj.enableWakeUp();
-            waitObj.wakeUp(); // 唤醒线程
-        }
-    }
-}
-
 void VideoPlayer::requestTaskHandlerSeek(MediaRequestHandleEvent* e, std::any userData)
 {
     // 先将播放器状态调整至非播放中状态
@@ -663,7 +643,7 @@ void VideoPlayer::requestTaskHandlerSeek(MediaRequestHandleEvent* e, std::any us
     //    logger.error("Error seeking to pts: {} in stream index: {}", pts, streamIndex);
     //    return;
     //}
-    int rst = av_seek_frame(playbackStateVariables.formatCtx.get(), streamIndex, pts, AVSEEK_FLAG_BACKWARD);
+    int rst = av_seek_frame(playbackStateVariables.formatCtx, streamIndex, pts, AVSEEK_FLAG_BACKWARD);
     if (rst < 0) // 寻找失败
     {
         logger.error("Error video seeking to pts: {} in stream index: {}, duration: {}", pts, streamIndex, playbackStateVariables.formatCtx->duration);
@@ -682,31 +662,10 @@ void VideoPlayer::requestTaskHandlerSeek(MediaRequestHandleEvent* e, std::any us
         playbackStateVariables.videoClock.store(pts / (double)AV_TIME_BASE);
     // 读取下一帧
     AVPacket* pkt = nullptr;
-    while (true)
-    {
-        if (MediaDecodeUtils::readFrame(&logger, playbackStateVariables.formatCtx.get(), pkt, true))
-        {
-            if (pkt->stream_index != playbackStateVariables.streamIndex)
-            {
-                av_packet_free(&pkt); // 释放不需要的包
-                continue;
-            }
-            // 重置时钟
-            if (pkt->pts && pkt->stream_index >= 0) // 如果存在pts，否则pkt->stream_index不可取
-                playbackStateVariables.videoClock.store(pkt->pts * av_q2d(playbackStateVariables.formatCtx->streams[pkt->stream_index]->time_base));
-            // 入队
-            enqueue(playbackStateVariables.packetQueue, pkt);
-        }
-        else
-            if (pkt) av_packet_free(&pkt); // 释放包
-        break;
-    }
-    if (playbackStateVariables.playOptions.clockSyncFunction)
-    {
-        int64_t sleepTime = 0;
-        playbackStateVariables.isVideoClockStable.store(false);
-        playbackStateVariables.playOptions.clockSyncFunction(playbackStateVariables.videoClock, playbackStateVariables.isVideoClockStable, playbackStateVariables.realtimeClock, sleepTime);
-    }
+    playbackStateVariables.demuxer->readOnePacket(&pkt);
+    // 重置时钟
+    if (pkt)
+        clockSync(pkt->pts, pkt->stream_index, false);
     // 恢复播放状态
     setPlayerState(PlayerState::Playing);
 }

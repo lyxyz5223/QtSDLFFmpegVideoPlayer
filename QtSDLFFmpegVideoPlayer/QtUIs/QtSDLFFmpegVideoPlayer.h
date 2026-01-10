@@ -125,7 +125,7 @@ private:
     char** argv = nullptr;
 
     // 日志记录
-    DefinePlayerLoggerSinks(qtSDLFFmpegVideoPlayerLoggerSinks, "QtSDLFFmpegVideoPlayer.class.log");
+    DefinePlayerLoggerSinks(qtSDLFFmpegVideoPlayerLoggerSinks, "QtSDLFFmpegVideoPlayer");
     Logger logger{ "QtSDLFFmpegVideoPlayer", qtSDLFFmpegVideoPlayerLoggerSinks };
 
     // SDL渲染窗口

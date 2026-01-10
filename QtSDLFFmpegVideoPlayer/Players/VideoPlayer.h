@@ -91,33 +91,34 @@ public:// 这个区域用于定义公共类型
         }
     };
 
-
 private:
     struct VideoPlaybackStateVariables { // 用于存储播放状态相关的数据
         // 用于回调时获取所属播放器对象
         VideoPlayer* owner{ nullptr };
         VideoPlaybackStateVariables(VideoPlayer* o) : owner(o) {}
-
-        ConcurrentQueue<AVPacket*> packetQueue;
-        ConcurrentQueue<AVFrame*> frameQueue;
-        // 
+        // 线程等待对象管理器
+        ThreadStateManager threadStateManager;
+        // 解复用器
+        StreamType demuxerStreamType{ STREAM_TYPES };
+        SharedPtr<DemuxerInterface> demuxer{ nullptr };
+        AVFormatContext* formatCtx{ nullptr };
         StreamIndexType streamIndex{ -1 };
-        UniquePtr<AVFormatContext> formatCtx{ nullptr, constDeleterAVFormatContext };
+        ConcurrentQueue<AVPacket*>* packetQueue{ nullptr };
+
+        ConcurrentQueue<AVFrame*> frameQueue;
+
         UniquePtr<AVCodecContext> codecCtx{ nullptr, constDeleterAVCodecContext };
         AVHWDeviceType hwDeviceType{ AV_HWDEVICE_TYPE_NONE };
         AVPixelFormat hwPixelFormat{ AV_PIX_FMT_NONE };
         // 时钟
         AtomicDouble videoClock{ 0.0 }; // 单位s
         AtomicBool isVideoClockStable{ false }; // 时钟是否稳定
-
         // 系统时钟
-        double realtimeClock = 0;
+        double realtimeClock{ 0.0 };
 
         // 清空队列
         void clearPktAndFrameQueues() {
-            AVPacket* pkt = nullptr;
-            while (tryDequeue(packetQueue, pkt))
-                av_packet_free(&pkt);
+            demuxer->flushPacketQueue(demuxerStreamType);
             AVFrame* frame = nullptr;
             while (tryDequeue(frameQueue, frame))
                 av_frame_free(&frame);
@@ -128,7 +129,7 @@ private:
             clearPktAndFrameQueues();
             // 重置其他变量
             streamIndex = -1;
-            formatCtx.reset();
+            formatCtx = nullptr;
             codecCtx.reset();
             hwDeviceType = AV_HWDEVICE_TYPE_NONE;
             hwPixelFormat = AV_PIX_FMT_NONE;
@@ -136,11 +137,8 @@ private:
             realtimeClock = 0.0;
 
             // 清空请求任务队列
-            {
-                std::unique_lock lockMtxQueueRequestTasks(mtxQueueRequestTasks);
-                Queue<RequestTaskItem> emptyQueue;
-                std::swap(queueRequestTasks, emptyQueue);
-            }
+            requestQueueHandler = nullptr;
+            //requestQueueHandler.reset();
             threadStateManager.reset();
         }
 
@@ -148,38 +146,27 @@ private:
         std::string filePath;
         VideoPlayOptions playOptions;
         // 请求任务队列
-        Queue<RequestTaskItem> queueRequestTasks;
-        Mutex mtxQueueRequestTasks; // 必须使用独占锁
-        ConditionVariable cvQueueRequestTasks;
-        //template <typename ...Args>
-        //void pushRequestTaskQueue(Args... args) {
-        //    std::unique_lock lockMtxQueueRequestTasks(playbackStateVariables.mtxQueueRequestTasks); // 独占锁
-        //    playbackStateVariables.queueRequestTasks.emplace(args); // 构造入队
-        //}
-        void pushRequestTaskQueue(RequestTaskType type, std::vector<ThreadIdentifier> blockTargetThreadIds, MediaRequestHandleEvent* event, std::function<void(MediaRequestHandleEvent* e, std::any userData)> handler, std::any userData = std::any{}) {
-            std::unique_lock lockMtxQueueRequestTasks(mtxQueueRequestTasks); // 独占锁
-            auto&& beforeEnqueueEvent = event->clone(RequestHandleState::BeforeEnqueue);
-            owner->event(beforeEnqueueEvent.get()); // 触发入队前事件
-            if (beforeEnqueueEvent->isAccepted())
-            {
-                queueRequestTasks.emplace(type, handler, event, userData, blockTargetThreadIds); // 构造入队
-                auto&& afterEnqueueEvent = event->clone(RequestHandleState::AfterEnqueue);
-                owner->event(afterEnqueueEvent.get()); // 触发入队后事件
-            }
-            // 记得通知处于等待的请求任务处理线程
-            cvQueueRequestTasks.notify_all();
-        }
-        // 线程等待对象管理器
-        ThreadStateManager threadStateManager;
+        RequestTaskQueueHandler* requestQueueHandler{ nullptr };
     };
 
-    DefinePlayerLoggerSinks(loggerSinks, "VideoPlayer.class.log");
-    Logger logger{ "VideoPlayer", loggerSinks };
+    const std::string loggerName{ "VideoPlayer" };
+    DefinePlayerLoggerSinks(loggerSinks, loggerName);
+    Logger logger{ loggerName, loggerSinks };
 
     // 播放器状态
     AtomicStateMachine<PlayerState> playerState{ PlayerState::Stopped };
     AtomicWaitObject<bool> waitStopped{ false }; // true表示已停止，false表示未停止
     VideoPlaybackStateVariables playbackStateVariables{ this };
+    ComponentWorkMode demuxerMode{ ComponentWorkMode::Internal };
+    SharedPtr<SingleDemuxer> internalDemuxer{ std::make_shared<SingleDemuxer>(loggerName, playbackStateVariables.demuxerStreamType) };
+    SharedPtr<UnifiedDemuxer> externalDemuxer{ nullptr };
+    ComponentWorkMode requestTaskQueueHandlerMode{ ComponentWorkMode::Internal };
+    SharedPtr<RequestTaskQueueHandler> internalRequestTaskQueueHandler{ std::make_shared<RequestTaskQueueHandler>(this) };
+    RequestTaskQueueHandler* externalRequestTaskQueueHandler{ nullptr };
+
+    inline bool shouldStop() const {
+        return playerState == PlayerState::Stopping || playerState == PlayerState::Stopped;
+    }
 
 public:
     VideoPlayer() : PlayerInterface(logger) {}
@@ -196,7 +183,7 @@ public:
         playbackStateVariables.playOptions.mergeFrom(options);
         return playVideoFile();
     }
-    bool play() override {
+    virtual bool play() override {
         if (!isStopped())
             return false;
         PlayerState old = PlayerState::Stopped;
@@ -210,7 +197,7 @@ public:
         return playVideoFile(); // 重新播放
     }
 
-    void resume() override { // 用于从暂停/停止状态恢复播放
+    virtual void resume() override { // 用于从暂停/停止状态恢复播放
         if (isPaused())
         {
             // 恢复播放
@@ -219,7 +206,7 @@ public:
             playbackStateVariables.threadStateManager.wakeUpAll();
         }
     }
-    void pause() override {
+    virtual void pause() override {
         if (isPlaying())
         {
             setPlayerState(PlayerState::Pausing);
@@ -227,17 +214,25 @@ public:
             playbackStateVariables.threadStateManager.wakeUpAll();
         }
     }
-    void notifyStop() override {
+    virtual void notifyStop() override {
         if (playerState != PlayerState::Stopping && !isStopped())
         {
             setPlayerState(PlayerState::Stopping);
+            // 唤醒解复用器
+            if (demuxerMode == ComponentWorkMode::Internal)
+            {
+                playbackStateVariables.demuxer->stop();
+                //playbackStateVariables.demuxer->stop(); // 这里不调用stop，因为start的时候传递了stopCondition用于决定何时退出，所以这里只需要唤醒即可
+                //playbackStateVariables.demuxer->wakeUp();
+            }
             // 唤醒所有线程
             playbackStateVariables.threadStateManager.wakeUpAll();
             // 唤醒请求任务等待，以便处理停止请求，退出处理线程
-            playbackStateVariables.cvQueueRequestTasks.notify_all();
+            if (requestTaskQueueHandlerMode == ComponentWorkMode::Internal)
+                playbackStateVariables.requestQueueHandler->stop();
         }
     }
-    void stop() override {
+    virtual void stop() override {
         if (playerState != PlayerState::Stopping && !isStopped())
         {
             notifyStop();
@@ -247,36 +242,75 @@ public:
     }
 
     // \param streamIndex -1表示使用AV_TIME_BASE计算，否则使用streamIndex指定的流的time_base
-    void notifySeek(uint64_t pts, StreamIndexType streamIndex = -1) override {
-        if (!isStopped() && playerState != PlayerState::Stopping)
+    virtual void notifySeek(uint64_t pts, StreamIndexType streamIndex = -1) override {
+        if (shouldCommitRequest())
         {
             // 提交seek任务
             auto seekHandler = std::bind(&VideoPlayer::requestTaskHandlerSeek, this, std::placeholders::_1, std::placeholders::_2);
             // 阻塞三个线程（即所有与读包解包相关的线程）
-            auto&& blockThreadIds = { ThreadIdentifier::VideoReadingThread, ThreadIdentifier::VideoDecodingThread, ThreadIdentifier::VideoRenderingThread };
-            playbackStateVariables.pushRequestTaskQueue(RequestTaskType::Seek, blockThreadIds, new MediaSeekEvent{ STREAM_TYPES, pts, streamIndex }, seekHandler);
+            auto&& blockThreadIds = { ThreadIdentifier::Demuxer, ThreadIdentifier::Decoder, ThreadIdentifier::Renderer };
+            playbackStateVariables.requestQueueHandler->push(RequestTaskType::Seek, blockThreadIds, new MediaSeekEvent{ STREAM_TYPES, pts, streamIndex }, seekHandler);
         }
     }
-    void seek(uint64_t pts, StreamIndexType streamIndex = -1) override {
+    virtual void seek(uint64_t pts, StreamIndexType streamIndex = -1) override {
         notifySeek(pts, streamIndex);
     }
 
-    bool isPlaying() const override {
+    virtual bool isPlaying() const override {
         return playerState == PlayerState::Playing;
     }
-    bool isPaused() const override {
+    virtual bool isPaused() const override {
         return playerState == PlayerState::Paused;
     }
-    bool isStopped() const override {
+    virtual bool isStopped() const override {
         return playerState == PlayerState::Stopped;
     }
+    virtual PlayerState getPlayerState() const override {
+        return playerState.load();
+    }
 
-    void setFilePath(const std::string& filePath) override {
+    virtual void setFilePath(const std::string& filePath) override {
         this->playbackStateVariables.filePath = filePath;
     }
 
-    std::string getFilePath() const override {
+    virtual std::string getFilePath() const override {
         return playbackStateVariables.filePath;
+    }
+
+    virtual void setDemuxerMode(ComponentWorkMode mode) override {
+        this->demuxerMode = mode;
+    }
+
+    virtual ComponentWorkMode getDemuxerMode() const override {
+        return this->demuxerMode;
+    }
+    
+    virtual void setExternalDemuxer(const SharedPtr<UnifiedDemuxer>& demuxer) override {
+        if (this->externalDemuxer)
+        {
+            this->externalDemuxer->setPacketEnqueueCallback(playbackStateVariables.demuxerStreamType, nullptr);
+            this->externalDemuxer->removeStreamType(playbackStateVariables.demuxerStreamType);
+        }
+        demuxer->addStreamType(playbackStateVariables.demuxerStreamType);
+        demuxer->setPacketEnqueueCallback(playbackStateVariables.demuxerStreamType, std::bind(&VideoPlayer::packetEnqueueCallback, this));
+        this->externalDemuxer = demuxer;
+    }
+
+    virtual void setRequestTaskQueueHandlerMode(ComponentWorkMode mode) override {
+        this->requestTaskQueueHandlerMode = mode;
+    }
+
+    virtual ComponentWorkMode getRequestTaskQueueHandlerMode() const override {
+        return this->requestTaskQueueHandlerMode;
+    }
+    virtual void setExternalRequestTaskQueueHandler(const SharedPtr<RequestTaskQueueHandler>& handler) override {
+        if (this->externalRequestTaskQueueHandler)
+        {
+            handler->stop();
+            handler->removeThreadStateHandlersContext(STREAM_TYPES);
+        }
+        this->externalRequestTaskQueueHandler = handler.get();
+        addThreadStateHandlersContext(handler.get());
     }
 
     void setStreamIndexSelector(const StreamIndexSelector& selector) {
@@ -310,10 +344,35 @@ protected:
         }
         return PlayerInterface::event(e);
     }
-    // 渲染事件处理函数，子类可重写以实现自定义渲染逻辑
+    // 渲染事件处理函数（接口），子类可重写以实现自定义渲染逻辑
     virtual void renderEvent(VideoRenderEvent* e) {
 
     }
+
+    void clearBuffers() {
+        // 清空队列
+        playbackStateVariables.clearPktAndFrameQueues();
+        // 刷新解码器buffer
+        avcodec_flush_buffers(playbackStateVariables.codecCtx.get());
+    }
+
+    int64_t clockSync(size_t pts, StreamIndexType streamIndex, bool isStable) {
+        if (streamIndex >= 0 && streamIndex < playbackStateVariables.formatCtx->nb_streams)
+            playbackStateVariables.videoClock.store(pts * av_q2d(playbackStateVariables.formatCtx->streams[streamIndex]->time_base));
+        else
+            playbackStateVariables.videoClock.store(pts / (double)AV_TIME_BASE);
+
+        if (playbackStateVariables.playOptions.clockSyncFunction)
+        {
+            int64_t sleepTime = 0;
+            playbackStateVariables.isVideoClockStable.store(isStable);
+            bool ret = playbackStateVariables.playOptions.clockSyncFunction(playbackStateVariables.videoClock, playbackStateVariables.isVideoClockStable, playbackStateVariables.realtimeClock, sleepTime);
+            if (!ret) return 0; // 返回false表示不需要同步
+            return sleepTime;
+        }
+        return 0;
+    }
+
 
 private:
     void setPlayerState(PlayerState state) {
@@ -338,32 +397,63 @@ private:
         setPlayerState(PlayerState::Stopped);
     }
 
+
+    bool shouldCommitRequest() {
+        return !isStopped() && playerState != PlayerState::Stopping
+            && requestTaskQueueHandlerMode == ComponentWorkMode::Internal;
+    }
+
+    void addThreadStateHandlersContext(RequestTaskQueueHandler* handler) {
+        struct ThreadBlockerAwakenerContext {
+            std::vector<ThreadStateManager::ThreadStateController> waitObjs{};
+            bool demuxerPaused{ false };
+        } threadBlockerAwakenerContext;
+        handler->addThreadStateHandlersContext(STREAM_TYPES,
+            [&](const RequestTaskItem& taskItem, std::any& userData) {
+                //std::vector<ThreadStateManager::ThreadStateController> waitObjs;
+                auto& ctx = std::any_cast<ThreadBlockerAwakenerContext&>(userData);
+                ctx.waitObjs.clear();
+                threadBlocker(logger, taskItem.blockTargetThreadIds, playbackStateVariables.threadStateManager, playbackStateVariables.demuxer.get(), ctx.waitObjs, ctx.demuxerPaused);
+            },
+            [&](const RequestTaskItem& taskItem, std::any& userData) {
+                auto& ctx = std::any_cast<ThreadBlockerAwakenerContext&>(userData);
+                threadAwakener(ctx.waitObjs, playbackStateVariables.demuxer.get(), ctx.demuxerPaused);
+            },
+            threadBlockerAwakenerContext);
+    }
+
+
     bool playVideoFile();
 
-    // 打开文件
-    bool openInput() {
-        return MediaDecodeUtils::openFile(&logger, playbackStateVariables.formatCtx, playbackStateVariables.filePath);
-    }
-    
-    // 查找流信息
-    bool findStreamInfo() {
-        return MediaDecodeUtils::findStreamInfo(&logger, playbackStateVariables.formatCtx.get());
-    }
+    //// 打开文件
+    //bool openInput() {
+    //    return MediaDecodeUtils::openFile(&logger, playbackStateVariables.formatCtx, playbackStateVariables.filePath);
+    //}
+    //
+    //// 查找流信息
+    //bool findStreamInfo() {
+    //    return MediaDecodeUtils::findStreamInfo(&logger, playbackStateVariables.formatCtx.get());
+    //}
 
     // 查找并选择视频流
-    bool findAndSelectVideoStream();
+    //bool findAndSelectVideoStream();
 
     // 查找并打开解码器
     bool findAndOpenVideoDecoder();
 
-    // 从文件中读包
-    void readPackets();
+    // 从文件中读包，不依赖于解码器，因此不需要事先打开解码器
+    //void readPackets();
+    
+    // （如果包队列少于或等于某个最小值）通知解码器有新包到达
+    void packetEnqueueCallback() {
+        // 解复用器每次成功入队一个包后调用该回调函数，通知解码器继续解码
+        if (getQueueSize(*playbackStateVariables.packetQueue) <= playbackStateVariables.demuxer->getMinPacketQueueSize(playbackStateVariables.demuxerStreamType))
+            playbackStateVariables.threadStateManager.wakeUpById(ThreadIdentifier::Decoder);
+    }
 
     void packet2VideoFrames();
 
     void renderVideo();
-
-    void requestTaskProcessor();
 
     void requestTaskHandlerSeek(MediaRequestHandleEvent* e, std::any userData);
 

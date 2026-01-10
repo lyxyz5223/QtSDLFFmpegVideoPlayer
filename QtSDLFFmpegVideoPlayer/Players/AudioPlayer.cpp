@@ -3,31 +3,64 @@
 bool AudioPlayer::playAudioFile()
 {
     waitStopped.set(false);
-    // 打开文件
-    if (!openInput())
-    {
+    auto demuxerMode = this->demuxerMode;
+    auto requestTaskQueueHandlerMode = this->requestTaskQueueHandlerMode;
+    // 初始化解复用器
+    try {
+        auto& psv = playbackStateVariables;
+        if (demuxerMode == ComponentWorkMode::Internal)
+        {
+            psv.demuxer = internalDemuxer;
+            psv.demuxer->setPacketEnqueueCallback(playbackStateVariables.demuxerStreamType, std::bind(&AudioPlayer::packetEnqueueCallback, this));
+            psv.demuxer->openAndSelectStreams(psv.filePath, psv.demuxerStreamType, psv.playOptions.streamIndexSelector);
+        }
+        else/* if (demuxerMode == DemuxerMode::External)*/
+            psv.demuxer = externalDemuxer;
+        if (!psv.demuxer) // 解复用器不存在，通常为外部解复用器指针为空
+            throw std::runtime_error("Demuxer is nullptr.");
+        psv.formatCtx = psv.demuxer->getFormatContext();
+        psv.streamIndex = psv.demuxer->getStreamIndex(psv.demuxerStreamType);
+        psv.packetQueue = psv.demuxer->getPacketQueue(psv.demuxerStreamType);
+
+        if (requestTaskQueueHandlerMode == ComponentWorkMode::Internal)
+        {
+            psv.requestQueueHandler = internalRequestTaskQueueHandler.get();
+            addThreadStateHandlersContext(internalRequestTaskQueueHandler.get());
+        }
+        else
+            psv.requestQueueHandler = externalRequestTaskQueueHandler;
+        if (!psv.requestQueueHandler) // 请求任务队列处理器不存在，通常为外部请求任务队列处理器指针为空
+            throw std::runtime_error("RequestTaskQueueHandler is nullptr.");
+    }
+    catch (std::runtime_error e) {
+        logger.error("Failed to open and select streams: {}", e.what());
         resetPlayer();
         return false;
     }
-    // 查找流信息
-    if (!findStreamInfo())
-    {
-        resetPlayer();
-        return false;
-    }
-    // 查找并选择音频流
-    if (!findAndSelectAudioStream())
-    {
-        resetPlayer();
-        return false;
-    }
-    // 寻找并打开解码器
+    //// 打开文件
+    //if (!openInput())
+    //{
+    //    resetPlayer();
+    //    return false;
+    //}
+    //// 查找流信息
+    //if (!findStreamInfo())
+    //{
+    //    resetPlayer();
+    //    return false;
+    //}
+    //// 查找并选择音频流
+    //if (!findAndSelectAudioStream())
+    //{
+    //    resetPlayer();
+    //    return false;
+    //}
+    // 寻找并打开解码器 
     if (!findAndOpenAudioDecoder())
     {
         resetPlayer();
         return false;
     }
-
     // 打开音频设备
     unsigned int frameBufferSize = this->playbackStateVariables.codecCtx->frame_size;
     if (!openAndStartOutputAudioStream(this->playbackStateVariables.codecCtx->sample_rate, this->playbackStateVariables.codecCtx->ch_layout, AUDIO_OUTPUT_FORMAT, &frameBufferSize))
@@ -39,24 +72,29 @@ bool AudioPlayer::playAudioFile()
     // 修改状态为：播放中
     setPlayerState(PlayerState::Playing);
     // 启动处理线程
-    std::thread threadRequestTaskProcessor(&AudioPlayer::requestTaskProcessor, this);
+    if (requestTaskQueueHandlerMode == ComponentWorkMode::Internal)
+        playbackStateVariables.requestQueueHandler->start();
     // 启动读包
-    std::thread threadReadPackets(&AudioPlayer::readPackets, this);
+    //std::thread threadReadPackets(&AudioPlayer::readPackets, this);
+    if (demuxerMode == ComponentWorkMode::Internal)
+        playbackStateVariables.demuxer->start(); // 启动解复用器读取线程
     // 启动包转音频流
     std::thread threadPacket2AudioStreams(&AudioPlayer::packet2AudioStreams, this);
     // 启动渲染音频
     std::thread threadRenderAudio(&AudioPlayer::renderAudio, this);
     // 等待线程结束
-    if (threadRequestTaskProcessor.joinable())
-        threadRequestTaskProcessor.join();
-    if (threadReadPackets.joinable())
-        threadReadPackets.join();
+    if (requestTaskQueueHandlerMode == ComponentWorkMode::Internal)
+        playbackStateVariables.requestQueueHandler->waitStop();
+    //if (threadReadPackets.joinable())
+    //    threadReadPackets.join();
     if (threadPacket2AudioStreams.joinable())
         threadPacket2AudioStreams.join();
     if (threadRenderAudio.joinable())
         threadRenderAudio.join();
+    if (demuxerMode == ComponentWorkMode::Internal)
+        playbackStateVariables.demuxer->waitStop(); // 等待解复用器停止
     // 关闭音频输出流
-    
+    stopAndCloseOutputAudioStream();
     // 恢复播放器状态
     resetPlayer();
     // 通知停止
@@ -197,85 +235,85 @@ bool AudioPlayer::openAndStartOutputAudioStream(int sampleRate, AVChannelLayout 
     return startOutputAudioStream();
 }
 
-bool AudioPlayer::findAndSelectAudioStream()
-{
-    std::vector<StreamIndexType> streamIndicesList;
-    // 查找视频流和音频流
-    for (size_t i = 0; i < playbackStateVariables.formatCtx->nb_streams; ++i)
-        if (playbackStateVariables.formatCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
-            streamIndicesList.emplace_back(i);
-    StreamIndexType si = -1;
-    auto& streamIndexSelector = playbackStateVariables.playOptions.streamIndexSelector;
-    if (!streamIndexSelector)
-        return false;
-    bool rst = streamIndexSelector(si, MediaType::Audio, streamIndicesList, playbackStateVariables.formatCtx.get(), playbackStateVariables.codecCtx.get());
-    if (rst)
-    {
-        if (si >= 0 && si < static_cast<StreamIndexType>(playbackStateVariables.formatCtx->nb_streams))
-            playbackStateVariables.streamIndex = si;
-        else
-            playbackStateVariables.streamIndex = -1;
-    }
-    return rst;
-}
+//bool AudioPlayer::findAndSelectAudioStream()
+//{
+//    std::vector<StreamIndexType> streamIndicesList;
+//    // 查找视频流和音频流
+//    for (size_t i = 0; i < playbackStateVariables.formatCtx->nb_streams; ++i)
+//        if (playbackStateVariables.formatCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
+//            streamIndicesList.emplace_back(i);
+//    StreamIndexType si = -1;
+//    auto& streamIndexSelector = playbackStateVariables.playOptions.streamIndexSelector;
+//    if (!streamIndexSelector)
+//        return false;
+//    bool rst = streamIndexSelector(si, StreamType::Audio, streamIndicesList, playbackStateVariables.formatCtx.get(), playbackStateVariables.codecCtx.get());
+//    if (rst)
+//    {
+//        if (si >= 0 && si < static_cast<StreamIndexType>(playbackStateVariables.formatCtx->nb_streams))
+//            playbackStateVariables.streamIndex = si;
+//        else
+//            playbackStateVariables.streamIndex = -1;
+//    }
+//    return rst;
+//}
 
 bool AudioPlayer::findAndOpenAudioDecoder()
 {
-    return MediaDecodeUtils::findAndOpenAudioDecoder(&logger, playbackStateVariables.formatCtx.get(), playbackStateVariables.streamIndex, playbackStateVariables.codecCtx);
+    return MediaDecodeUtils::findAndOpenAudioDecoder(&logger, playbackStateVariables.formatCtx, playbackStateVariables.streamIndex, playbackStateVariables.codecCtx);
 }
 
 
-void AudioPlayer::readPackets()
-{
-    auto& threadStateManager = playbackStateVariables.threadStateManager;
-    auto&& waitObj = threadStateManager.addThread(ThreadIdentifier::AudioReadingThread);
-    ThreadStateManager::AutoRemovedThreadObj autoRemoveWaitObj{ threadStateManager, waitObj };
-
-    // 视频解码和显示循环
-    while (true)
-    {
-        if (waitObj.isBlocking())
-            waitObj.block();
-
-        if (playerState == PlayerState::Stopping || playerState == PlayerState::Stopped)
-            break;
-
-        auto oldPktQueueSize = getQueueSize(playbackStateVariables.packetQueue);
-        if (oldPktQueueSize >= MAX_AUDIO_PACKET_QUEUE_SIZE)
-        {
-            waitObj.pause();
-            continue;
-        }
-        // Read frame from the format context 读取帧
-        AVPacket* pkt = nullptr;
-        if (!MediaDecodeUtils::readFrame(&logger, playbackStateVariables.formatCtx.get(), pkt, true))
-        {
-            if (pkt)
-                av_packet_free(&pkt); // 释放包
-            logger.trace("Read frame finished.");
-            //break; // 读取结束，退出循环
-            // 读取结束，暂停线程，等待通知
-            waitObj.pause();
-            continue;
-        }
-        if (pkt->stream_index != playbackStateVariables.streamIndex)
-        {
-            av_packet_free(&pkt); // 释放不需要的包
-            continue;
-        }
-        enqueue(playbackStateVariables.packetQueue, pkt);
-        //auto pktQueueSize = getQueueSize(playbackStateVariables.packetQueue);
-        logger.trace("Pushed audio packet, queue size: {}", oldPktQueueSize + 1);
-        if (oldPktQueueSize + 1 <= MIN_AUDIO_PACKET_QUEUE_SIZE)
-            threadStateManager.wakeUpById(ThreadIdentifier::AudioDecodingThread);
-    }
-}
+//void AudioPlayer::readPackets()
+//{
+//    auto& threadStateManager = playbackStateVariables.threadStateManager;
+//    auto&& waitObj = threadStateManager.addThread(ThreadIdentifier::ReadingThread);
+//    ThreadStateManager::AutoRemovedThreadObj autoRemoveWaitObj{ threadStateManager, waitObj };
+//
+//    // 视频解码和显示循环
+//    while (true)
+//    {
+//        if (waitObj.isBlocking())
+//            waitObj.block();
+//
+//        if (shouldStop())
+//            break;
+//
+//        auto oldPktQueueSize = getQueueSize(playbackStateVariables.packetQueue);
+//        if (oldPktQueueSize >= MAX_AUDIO_PACKET_QUEUE_SIZE)
+//        {
+//            waitObj.pause();
+//            continue;
+//        }
+//        // Read frame from the format context 读取帧
+//        AVPacket* pkt = nullptr;
+//        if (!MediaDecodeUtils::readFrame(&logger, playbackStateVariables.formatCtx, pkt, true))
+//        {
+//            if (pkt)
+//                av_packet_free(&pkt); // 释放包
+//            logger.trace("Read frame finished.");
+//            //break; // 读取结束，退出循环
+//            // 读取结束，暂停线程，等待通知
+//            waitObj.pause();
+//            continue;
+//        }
+//        if (pkt->stream_index != playbackStateVariables.streamIndex)
+//        {
+//            av_packet_free(&pkt); // 释放不需要的包
+//            continue;
+//        }
+//        enqueue(playbackStateVariables.packetQueue, pkt);
+//        //auto pktQueueSize = getQueueSize(playbackStateVariables.packetQueue);
+//        logger.trace("Pushed audio packet, queue size: {}", oldPktQueueSize + 1);
+//        if (oldPktQueueSize + 1 <= MIN_AUDIO_PACKET_QUEUE_SIZE)
+//            threadStateManager.wakeUpById(ThreadIdentifier::DecodingThread);
+//    }
+//}
 
 // 音频包解码线程函数
 void AudioPlayer::packet2AudioStreams()
 {
     auto& threadStateManager = playbackStateVariables.threadStateManager;
-    auto&& waitObj = threadStateManager.addThread(ThreadIdentifier::AudioDecodingThread);
+    auto&& waitObj = threadStateManager.addThread(ThreadIdentifier::Decoder);
     ThreadStateManager::AutoRemovedThreadObj autoRemoveWaitObj{ threadStateManager, waitObj };
 
     AVRational timeBaseRational = playbackStateVariables.formatCtx->streams[playbackStateVariables.streamIndex]->time_base;
@@ -288,7 +326,7 @@ void AudioPlayer::packet2AudioStreams()
         if (waitObj.isBlocking())
             waitObj.block();
 
-        if (playerState == PlayerState::Stopping || playerState == PlayerState::Stopped)
+        if (shouldStop())
             break;
         else if (playerState != PlayerState::Playing)
         {
@@ -303,20 +341,21 @@ void AudioPlayer::packet2AudioStreams()
             waitObj.pause();
             continue; // 如果音频流队列中有太多数据，等待消费掉一些再继续解码
         }
-        if (getQueueSize(playbackStateVariables.packetQueue) < MIN_AUDIO_PACKET_QUEUE_SIZE)
-            threadStateManager.wakeUpById(ThreadIdentifier::AudioReadingThread);
+        if (getQueueSize(*playbackStateVariables.packetQueue) < MIN_AUDIO_PACKET_QUEUE_SIZE)
+            playbackStateVariables.demuxer->wakeUp(); // 包队列数据过少，唤醒解复用器读取更多数据
+
 
         logger.trace("Current audio stream queue size: {}", streamQueueSize);
         // 如果队列中有包，则取出解码
         AVPacket* pkt = nullptr;
-        if (!tryDequeue(playbackStateVariables.packetQueue, pkt))
+        if (!tryDequeue(*playbackStateVariables.packetQueue, pkt))
         {
             waitObj.pause();
             continue; // 出队失败，说明队列为空
         }
         if (!pkt) // 一定要过滤空包，否则avcodec_send_packet将会设置为EOF，之后将无法继续解包
             continue;
-        logger.trace("Got audio packet, current audio packet queue size: {}", getQueueSize(playbackStateVariables.packetQueue));
+        logger.trace("Got audio packet, current audio packet queue size: {}", getQueueSize(*playbackStateVariables.packetQueue));
         UniquePtr<AVPacket> pktPtr{ pkt, constDeleterAVPacket };
         int aspRst = avcodec_send_packet(playbackStateVariables.codecCtx.get(), pkt);
         if (aspRst < 0 && aspRst != AVERROR(EAGAIN) && aspRst != AVERROR_EOF)
@@ -406,13 +445,13 @@ void AudioPlayer::packet2AudioStreams()
 void AudioPlayer::renderAudio()
 {
     auto& threadStateManager = playbackStateVariables.threadStateManager;
-    auto&& waitObj = threadStateManager.addThread(ThreadIdentifier::AudioPlayingThread);
+    auto&& waitObj = threadStateManager.addThread(ThreadIdentifier::Renderer);
     ThreadStateManager::AutoRemovedThreadObj autoRemoveWaitObj{ threadStateManager, waitObj };
     while (true)
     {
         if (waitObj.isBlocking())
             waitObj.block();
-        if (playerState == PlayerState::Stopping || playerState == PlayerState::Stopped)
+        if (shouldStop())
             break;
         // 睡眠，直到唤醒
         waitObj.pause();
@@ -442,7 +481,7 @@ AudioAdapter::AudioCallbackResult AudioPlayer::renderAudioAsyncCallback(void*& o
 
             // 填充音频数据后调用事件回调
             FrameContext frameCtx{
-                playbackStateVariables.formatCtx.get(),
+                playbackStateVariables.formatCtx,
                 playbackStateVariables.codecCtx.get(),
                 playbackStateVariables.streamIndex,
                 { static_cast<uint8_t*>(outputBuffer), oneSize * nFrames },
@@ -493,7 +532,7 @@ AudioAdapter::AudioCallbackResult AudioPlayer::renderAudioAsyncCallback(void*& o
         }
     }
     if (playbackStateVariables.streamQueue.size() < MIN_AUDIO_OUTPUT_STREAM_QUEUE_SIZE)
-        playbackStateVariables.threadStateManager.wakeUpById(ThreadIdentifier::AudioDecodingThread);
+        playbackStateVariables.threadStateManager.wakeUpById(ThreadIdentifier::Decoder);
     
     //logger.info("Got audio streams, current audio stream queue size: {}", getQueueSize(streamQueue));
     if (playerState == PlayerState::Stopped || playerState == PlayerState::Stopping
@@ -511,65 +550,6 @@ AudioAdapter::AudioCallbackResult AudioPlayer::renderAudioAsyncCallback(void*& o
     return AudioAdapter::Continue;
 }
 
-void AudioPlayer::requestTaskProcessor()
-{
-    auto shouldExit = [this]() -> bool {
-        return (playerState == PlayerState::Stopping || playerState == PlayerState::Stopped);
-        };
-    auto& queueRequestTasks = playbackStateVariables.queueRequestTasks;
-    auto& mtxQueueRequestTasks = playbackStateVariables.mtxQueueRequestTasks;
-    auto& cvQueueRequestTasks = playbackStateVariables.cvQueueRequestTasks;
-    auto& threadStateManager = playbackStateVariables.threadStateManager;
-    while (true)
-    {
-        std::unique_lock lockMtxQueueRequestTasks(mtxQueueRequestTasks);
-        while (queueRequestTasks.empty())
-        {
-            if (shouldExit())
-                break;
-            cvQueueRequestTasks.wait(lockMtxQueueRequestTasks); // 等待有任务到来
-        }
-        if (shouldExit())
-            break;
-        // 处理任务
-        RequestTaskItem taskItem = queueRequestTasks.front();
-        queueRequestTasks.pop(); // 先弹出任务
-        // 构造智能指针，自动释放事件对象内存
-        UniquePtrD<MediaRequestHandleEvent> smartEvent{ taskItem.event };
-        lockMtxQueueRequestTasks.unlock();
-        // 通知需要等待的线程
-        std::vector<ThreadStateManager::ThreadStateController> waitObjs;
-        for (const auto& threadId : taskItem.blockTargetThreadIds)
-        {
-            try {
-                auto&& tsc = threadStateManager.get(threadId);
-                waitObjs.push_back(tsc);
-                tsc.disableWakeUp();
-                tsc.setBlockedAndWaitChanged(true);
-            }
-            catch (std::exception e) {
-                logger.error("{}", e.what());
-            }
-        }
-        // 执行任务处理函数
-        auto&& requestBeforeHandleEvent = taskItem.event->clone(RequestHandleState::BeforeHandle);
-        event(requestBeforeHandleEvent.get());
-        if (requestBeforeHandleEvent->isAccepted()) // 只有被接受的任务才处理
-        {
-            if (taskItem.handler)
-                taskItem.handler(taskItem.event, taskItem.userData);
-        }
-        auto&& requestAfterHandleEvent = taskItem.event->clone(RequestHandleState::AfterHandle);
-        event(requestAfterHandleEvent.get());
-        // 通知所有暂停的线程继续运行
-        for (auto& waitObj : waitObjs)
-        {
-            waitObj.enableWakeUp();
-            waitObj.wakeUp(); // 唤醒线程
-        }
-    }
-}
-
 void AudioPlayer::requestTaskHandlerSeek(MediaRequestHandleEvent* e, std::any userData)
 {
     // 先将播放器状态调整至非播放中状态
@@ -578,7 +558,7 @@ void AudioPlayer::requestTaskHandlerSeek(MediaRequestHandleEvent* e, std::any us
     auto* seekEvent = static_cast<MediaSeekEvent*>(e);
     uint64_t pts = seekEvent->timestamp();
     StreamIndexType streamIndex = seekEvent->streamIndex();
-    int rst = av_seek_frame(playbackStateVariables.formatCtx.get(), streamIndex, pts, AVSEEK_FLAG_BACKWARD);
+    int rst = av_seek_frame(playbackStateVariables.formatCtx, streamIndex, pts, AVSEEK_FLAG_BACKWARD);
     if (rst < 0) // 寻找失败
     {
         logger.error("Error audio seeking to pts: {} in stream index: {}, duration: {}", pts, streamIndex, playbackStateVariables.formatCtx->duration);
@@ -586,10 +566,8 @@ void AudioPlayer::requestTaskHandlerSeek(MediaRequestHandleEvent* e, std::any us
         setPlayerState(PlayerState::Playing);
         return;
     }
-    // 清空队列
-    playbackStateVariables.clearPktAndStreamQueues();
-    // 刷新解码器buffer
-    avcodec_flush_buffers(playbackStateVariables.codecCtx.get());
+    // 清空缓冲区
+    clearBuffers();
     // 先重置一下时钟
     if (streamIndex >= 0)
         playbackStateVariables.audioClock.store(pts * av_q2d(playbackStateVariables.formatCtx->streams[streamIndex]->time_base));
@@ -599,7 +577,7 @@ void AudioPlayer::requestTaskHandlerSeek(MediaRequestHandleEvent* e, std::any us
     AVPacket* pkt = nullptr;
     while (true)
     {
-        if (MediaDecodeUtils::readFrame(&logger, playbackStateVariables.formatCtx.get(), pkt, true))
+        if (MediaDecodeUtils::readFrame(&logger, playbackStateVariables.formatCtx, pkt, true))
         {
             if (pkt->stream_index != playbackStateVariables.streamIndex)
             {
@@ -610,7 +588,7 @@ void AudioPlayer::requestTaskHandlerSeek(MediaRequestHandleEvent* e, std::any us
             if (pkt->pts && pkt->stream_index >= 0) // 如果存在pts，否则pkt->stream_index不可取
                 playbackStateVariables.audioClock.store(pkt->pts * av_q2d(playbackStateVariables.formatCtx->streams[pkt->stream_index]->time_base));
             // 入队
-            enqueue(playbackStateVariables.packetQueue, pkt);
+            enqueue(*playbackStateVariables.packetQueue, pkt);
         }
         else
             if (pkt) av_packet_free(&pkt); // 释放包

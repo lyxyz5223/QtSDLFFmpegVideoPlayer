@@ -7,6 +7,8 @@
 class MediaPlayer : public PlayerInterface
 {
 public:
+    StreamTypes STREAM_TYPES = StreamType::STAll;
+
     enum class AVSyncMode {
         //AudioMaster = 0,
         //VideoMaster = 1,
@@ -56,6 +58,8 @@ public:
         }
         virtual void startEvent(MediaPlaybackStateChangeEvent* e) override {
             player.logger.info("Video playback started.");
+            if (player.demuxerMode == ComponentWorkMode::External)
+                player.demuxer->start();
         }
         virtual void pauseEvent(MediaPlaybackStateChangeEvent* e) override {
             player.logger.info("Video playback paused.");
@@ -92,10 +96,24 @@ public:
             // 转发渲染事件
             player.event(e);
         }
+        // 清空缓冲区，包括队列和codecCtx中的buffer
+        void clearBuffers() {
+            VideoPlayer::clearBuffers();
+        }
+        int64_t clockSync(size_t pts, StreamIndexType streamIndex, bool isStable) {
+            return VideoPlayer::clockSync(pts, streamIndex, isStable);
+        }
     };
     class MediaAudioPlayer : public AudioPlayer {
         MediaPlayer& player;
     public:
+        // 清空缓冲区，包括队列和codecCtx中的buffer
+        void clearBuffers() {
+            AudioPlayer::clearBuffers();
+        }
+        int64_t clockSync(size_t pts, StreamIndexType streamIndex, bool isStable) {
+            return AudioPlayer::clockSync(pts, streamIndex, isStable);
+        }
         MediaAudioPlayer(MediaPlayer& player) : player(player) {}
         virtual void playbackStateChangeEvent(MediaPlaybackStateChangeEvent* e) override {
             auto mediaEvent = e->clone();
@@ -103,6 +121,8 @@ public:
         }
         virtual void startEvent(MediaPlaybackStateChangeEvent* e) override {
             player.logger.info("Audio playback started.");
+            if (player.demuxerMode == ComponentWorkMode::External)
+                player.demuxer->start();
         }
         virtual void pauseEvent(MediaPlaybackStateChangeEvent* e) override {
             player.logger.info("Audio playback paused.");
@@ -144,23 +164,29 @@ public:
 
 
 private:
-    DefinePlayerLoggerSinks(loggerSinks, "MediaPlayer.class.log");
-    Logger logger{ "MediaPlayer", loggerSinks };
+    const std::string loggerName{ "MediaPlayer" };
+    DefinePlayerLoggerSinks(loggerSinks, loggerName);
+    Logger logger{ loggerName, loggerSinks };
 //protected:
     std::string filePath;
     Atomic<AVSyncMode> avSyncMode{ AVSyncMode::VideoSyncToAudio };
     // 默认的流索引选择器：选择第一个流
-    StreamIndexSelector streamIndexSelector = [](StreamIndexType& outStreamIndex, MediaType type, const std::vector<StreamIndexType>& streamIndicesList, const AVFormatContext* fmtCtx, const AVCodecContext* codecCtx) -> bool {
-        if (streamIndicesList.empty())
-            return false;
-        else
-            outStreamIndex = streamIndicesList[0];
-        return true;
+    StreamIndexSelector streamIndexSelector = [](StreamIndexType& outStreamIndex, StreamType type, const std::span<AVStream*>& streamsSpan, const AVFormatContext* fmtCtx) -> bool {
+        for (auto& stream : streamsSpan)
+        {
+            AVMediaType mediaType = streamTypeToAVMediaType(type);
+            if (mediaType != AVMEDIA_TYPE_NB && stream->codecpar->codec_type == mediaType)
+            {
+                outStreamIndex = stream->index;
+                return true;
+            }
+        }
+        return false;
         };
 
     AtomicDouble audioClock{ 0.0 }; // 音频时钟
     AtomicBool isAudioClockStable{ false }; // 音频时钟是否稳定（seek设置后会不稳定，正常播放才会趋于稳定）
-    AtomicStateMachine<PlayerState> playerState{ PlayerState::Stopped };
+    //AtomicStateMachine<PlayerState> playerState{ PlayerState::Stopped };
     AtomicInt videoSeekingCount{ 0 }; // 视频seek处理中计数
     AtomicInt audioSeekingCount{ 0 }; // 音频seek处理中计数
 
@@ -217,18 +243,44 @@ private:
         return false;
         };
 
-    MediaVideoPlayer videoPlayer{ *this };
-    MediaAudioPlayer audioPlayer{ *this };
+    //std::vector<UniquePtrD<PlayerInterface>> players{
+    //    std::make_unique<MediaVideoPlayer>(*this), // 视频播放器
+    //    std::make_unique<MediaAudioPlayer>(*this)  // 音频播放器
+    //}; // 播放器列表
+    //MediaVideoPlayer* videoPlayer{ static_cast<MediaVideoPlayer*>(players[0].get()) };
+    //MediaAudioPlayer* audioPlayer{ static_cast<MediaAudioPlayer*>(players[1].get()) };
+    UniquePtrD<MediaVideoPlayer> videoPlayer{ std::make_unique<MediaVideoPlayer>(*this) }; // 视频播放器
+    UniquePtrD<MediaAudioPlayer> audioPlayer{ std::make_unique<MediaAudioPlayer>(*this) }; // 音频播放器
 
-public:
-    MediaPlayer() : PlayerInterface(logger) {}
-    ~MediaPlayer() {
-        if (!this->isStopped())
-            this->stop();
+    // 状态，用于中转处理
+    Atomic<PlayerState> playerState{ PlayerState::Stopped };
+    // 解复用器
+    SharedPtr<UnifiedDemuxer> demuxer{ std::make_shared<UnifiedDemuxer>(loggerName) };
+    StreamTypes demuxerStreamTypes{ static_cast<StreamType>(STVideo | STAudio) };
+    ComponentWorkMode demuxerMode{ ComponentWorkMode::External };
+    ComponentWorkMode requestTaskQueueHandlerMode{ ComponentWorkMode::External };
+    SharedPtr<RequestTaskQueueHandler> requestTaskQueueHandler{ std::make_shared<RequestTaskQueueHandler>(this) };
+
+    // 无论是否异步执行，函数对象均进行拷贝，保证对象有效
+    void execPlayerWithThreads(const std::vector<std::function<void()>>& functions, bool wait = true) {
+        std::vector<std::thread> threads;
+        for (const auto& func : functions)
+            threads.emplace_back([func]() { func(); }); // 拷贝函数对象，以防止引用失效
+        if (wait)
+        {
+            for (auto& thread : threads)
+                if (thread.joinable())
+                    thread.join();
+        }
+        else
+        {
+            for (auto& thread : threads)
+                if (thread.joinable())
+                    thread.detach();
+        }
     }
 
-    // 如果使用VideoPlayOptions，则enableHardwareDecoder会失效
-    bool play(const std::string& filePath, MediaPlayOptions options) {
+    bool playMediaFile(const MediaPlayOptions& options) {
         VideoPlayOptions videoOptions{
             streamIndexSelector,
             videoClockSyncFunction,
@@ -242,99 +294,156 @@ public:
             streamIndexSelector,
             audioClockSyncFunction
         };
-        this->setFilePath(filePath);
         bool ar = true;
         bool vr = true;
-        std::thread videoThread([&] { vr = this->videoPlayer.play(filePath, videoOptions); });
-        std::thread audioThread([&] { ar = this->audioPlayer.play(filePath, audioOptions); });
-        if (audioThread.joinable())
-            audioThread.join();
-        if (videoThread.joinable())
-            videoThread.join();
+        execPlayerWithThreads({ [&] { waitComponentsStop(); }, [&] { vr = videoPlayer->play(filePath, videoOptions); }, [&] { ar = audioPlayer->play(filePath, audioOptions); } });
         return ar && vr;
     }
-    virtual bool play() override {
+    bool playMediaFile() {
         bool ar = true;
         bool vr = true;
-        std::thread videoThread([&] { vr = this->videoPlayer.play(); });
-        std::thread audioThread([&] { ar = this->audioPlayer.play(); });
-        if (audioThread.joinable())
-            audioThread.join();
-        if (videoThread.joinable())
-            videoThread.join();
+        execPlayerWithThreads({ [&] { waitComponentsStop(); }, [&] { vr = videoPlayer->play(); }, [&] { ar = audioPlayer->play(); }});
         return ar && vr;
     }
-    virtual void resume() override {
-        this->audioPlayer.resume();
-        this->videoPlayer.resume();
+    void prepareToPlay() {
+        if (demuxerMode == ComponentWorkMode::External)
+            demuxer->openAndSelectStreams(filePath, demuxerStreamTypes, streamIndexSelector);
+        if (requestTaskQueueHandlerMode == ComponentWorkMode::External)
+            requestTaskQueueHandler->start();
     }
-    virtual void pause() override {
-        this->audioPlayer.pause();
-        this->videoPlayer.pause();
-    }
-    virtual void notifyStop() override {
-        std::thread videoThread([&] { this->videoPlayer.notifyStop(); });
-        std::thread audioThread([&] { this->audioPlayer.notifyStop(); });
-        if (audioThread.joinable())
-            audioThread.join();
-        if (videoThread.joinable())
-            videoThread.join();
-    }
-    virtual void stop() override {
-        std::thread videoThread([&] { this->videoPlayer.stop(); });
-        std::thread audioThread([&] { this->audioPlayer.stop(); });
-        if (audioThread.joinable())
-            audioThread.join();
-        if (videoThread.joinable())
-            videoThread.join();
+    void waitComponentsStop() {
+        if (demuxerMode == ComponentWorkMode::External)
+            demuxer->waitStop();
+        if (requestTaskQueueHandlerMode == ComponentWorkMode::External)
+            requestTaskQueueHandler->waitStop();
     }
 
-    // 跳转到指定pts位置
+    bool shouldStop() const {
+        auto s = getPlayerState();
+        if (s == PlayerState::Stopped || s == PlayerState::Stopping)
+            return true;
+        return false;
+    }
+public:
+    MediaPlayer() : PlayerInterface(logger) {
+        setDemuxerMode(demuxerMode); // setDemuxerMode方法设置音视频使用外部解复用器
+        setExternalDemuxer(demuxer); // 设置外部解复用器，由MediaPlayer管理解复用器
+        setRequestTaskQueueHandlerMode(requestTaskQueueHandlerMode); // 设置音视频使用外部请求任务队列处理器
+        setExternalRequestTaskQueueHandler(requestTaskQueueHandler);
+    }
+    ~MediaPlayer() {
+        if (!this->isStopped())
+            this->stop();
+    }
+
+    // 如果使用VideoPlayOptions，则enableHardwareDecoder会失效
+    bool play(const std::string& filePath, const MediaPlayOptions& options) {
+        this->setFilePath(filePath);
+        prepareToPlay();
+        return playMediaFile(options);
+    }
+    virtual bool play() override {
+        prepareToPlay();
+        return playMediaFile();
+    }
+    virtual void resume() override {
+        execPlayerWithThreads({ [&] { videoPlayer->resume(); }, [&] { audioPlayer->resume(); } });
+    }
+    virtual void pause() override {
+        execPlayerWithThreads({ [&] { videoPlayer->pause(); }, [&] { audioPlayer->pause(); } });
+    }
+    virtual void notifyStop() override {
+        if (demuxerMode == ComponentWorkMode::External)
+            demuxer->stop();
+        execPlayerWithThreads({ [&] { videoPlayer->notifyStop(); }, [&] { audioPlayer->notifyStop(); } });
+        if (requestTaskQueueHandlerMode == ComponentWorkMode::External)
+            requestTaskQueueHandler->stop();
+    }
+    virtual void stop() override {
+        if (demuxerMode == ComponentWorkMode::External)
+            demuxer->stop();
+        execPlayerWithThreads({ [&] { videoPlayer->stop(); }, [&] { audioPlayer->stop(); } });
+        if (requestTaskQueueHandlerMode == ComponentWorkMode::External)
+            requestTaskQueueHandler->stop();
+    }
+
+    // 跳转到指定pts位置，非精确跳转，使用AVSEEK_FLAG_BACKWARD标志从pts向前(回退)查找最近的关键帧
+    // \param pts 跳转的时间戳，单位为streamIndex对应的time_base，若streamIndex为-1，则单位为1/AV_TIME_BASE
     // \param streamIndex -1表示使用AV_TIME_BASE计算，否则使用streamIndex指定的流的time_base
     virtual void notifySeek(uint64_t pts, StreamIndexType streamIndex = -1) override {
         videoSeekingCount.fetch_add(1); // Fix the problem that audio haven't seeked yet when video seeked complete
         audioSeekingCount.fetch_add(1); // 修复视频seek完成时音频还没有seek的问题
-        std::thread videoThread([&] { this->videoPlayer.notifySeek(pts, streamIndex); });
-        std::thread audioThread([&] { this->audioPlayer.notifySeek(pts, streamIndex); });
-        if (audioThread.joinable())
-            audioThread.join();
-        if (videoThread.joinable())
-            videoThread.join();
+        if (demuxerMode == ComponentWorkMode::Internal)
+            execPlayerWithThreads({ [&] { videoPlayer->notifySeek(pts, streamIndex); }, [&] { audioPlayer->notifySeek(pts, streamIndex); } });
+        else
+            requestTaskQueueHandler->push(RequestTaskType::Seek, { ThreadIdentifier::Demuxer, ThreadIdentifier::Decoder, ThreadIdentifier::Renderer }, new MediaSeekEvent{ StreamType::STAll, pts, streamIndex }, std::bind(&MediaPlayer::requestTaskHandlerSeek, this, std::placeholders::_1, std::placeholders::_2));
         videoSeekingCount.fetch_sub(1); // Fix
         audioSeekingCount.fetch_sub(1); // Fix
     }
     virtual void seek(uint64_t pts, StreamIndexType streamIndex = -1) override {
         videoSeekingCount.fetch_add(1); // Fix the problem that audio haven't seeked yet when video seeked complete
         audioSeekingCount.fetch_add(1); // 修复视频seek完成时音频还没有seek的问题
-        std::thread videoThread([&] { this->videoPlayer.seek(pts, streamIndex); });
-        std::thread audioThread([&] { this->audioPlayer.seek(pts, streamIndex); });
-        if (audioThread.joinable())
-            audioThread.join();
-        if (videoThread.joinable())
-            videoThread.join();
+        if (demuxerMode == ComponentWorkMode::Internal)
+            execPlayerWithThreads({ [&] { videoPlayer->seek(pts, streamIndex); }, [&] { audioPlayer->seek(pts, streamIndex); } });
+        else
+            requestTaskQueueHandler->push(RequestTaskType::Seek, { ThreadIdentifier::Demuxer, ThreadIdentifier::Decoder, ThreadIdentifier::Renderer }, new MediaSeekEvent{ StreamType::STAll, pts, streamIndex }, std::bind(&MediaPlayer::requestTaskHandlerSeek, this, std::placeholders::_1, std::placeholders::_2));
         videoSeekingCount.fetch_sub(1); // Fix
         audioSeekingCount.fetch_sub(1); // Fix
     }
 
     virtual bool isPlaying() const override {
-        return this->audioPlayer.isPlaying() && this->videoPlayer.isPlaying();
+        return audioPlayer->isPlaying() && videoPlayer->isPlaying();
     }
     virtual bool isPaused() const override {
-        return this->audioPlayer.isPaused() && this->videoPlayer.isPaused();
+        return audioPlayer->isPaused() && videoPlayer->isPaused();
     }
     virtual bool isStopped() const override {
-        return this->audioPlayer.isStopped() && this->videoPlayer.isStopped();
+        return audioPlayer->isStopped() && videoPlayer->isStopped();
+    }
+    virtual PlayerState getPlayerState() const override {
+        PlayerState vs = videoPlayer->getPlayerState();
+        PlayerState as = audioPlayer->getPlayerState();
+        if (vs == as || vs != PlayerState::Stopped) // 优先返回非Stopped状态
+            return vs;
+        return as;
     }
 
-    void setFilePath(const std::string& filePath) {
+    virtual void setFilePath(const std::string& filePath) override {
         this->filePath = filePath;
-        this->videoPlayer.setFilePath(filePath);
-        this->audioPlayer.setFilePath(filePath);
+        this->videoPlayer->setFilePath(filePath);
+        this->audioPlayer->setFilePath(filePath);
     }
-    std::string getFilePath() const {
+    virtual std::string getFilePath() const override {
         return this->filePath;
     }
-    
+private:
+    virtual void setDemuxerMode(ComponentWorkMode mode) override {
+        this->videoPlayer->setDemuxerMode(mode);
+        this->audioPlayer->setDemuxerMode(mode);
+        this->demuxerMode = mode;
+    }
+    virtual ComponentWorkMode getDemuxerMode() const override {
+        return this->demuxerMode;
+    }
+    virtual void setExternalDemuxer(const SharedPtr<UnifiedDemuxer>& demuxer) override {
+        this->videoPlayer->setExternalDemuxer(demuxer);
+        this->audioPlayer->setExternalDemuxer(demuxer);
+    }
+    virtual void setRequestTaskQueueHandlerMode(ComponentWorkMode mode) override {
+        this->videoPlayer->setRequestTaskQueueHandlerMode(mode);
+        this->audioPlayer->setRequestTaskQueueHandlerMode(mode);
+        this->requestTaskQueueHandlerMode = mode;
+    }
+    virtual ComponentWorkMode getRequestTaskQueueHandlerMode() const override {
+        return this->requestTaskQueueHandlerMode;
+    }
+    virtual void setExternalRequestTaskQueueHandler(const SharedPtr<RequestTaskQueueHandler>& handler) override {
+        this->videoPlayer->setExternalRequestTaskQueueHandler(handler);
+        this->audioPlayer->setExternalRequestTaskQueueHandler(handler);
+    }
+
+public:
+
     void setAVSyncMode(AVSyncMode mode) {
         //this->avSyncMode = mode;
         this->avSyncMode.store(mode);
@@ -345,15 +454,15 @@ public:
     }
     
     void setRenderer(const VideoRenderFunction& renderer, VideoUserDataType userData) {
-        this->videoPlayer.setRenderer(renderer, userData);
+        this->videoPlayer->setRenderer(renderer, userData);
     }
 
     void setFrameSwitchOptionsCallback(VideoFrameSwitchOptionsCallback callback, VideoUserDataType userData) {
-        this->videoPlayer.setFrameSwitchOptionsCallback(callback, userData);
+        this->videoPlayer->setFrameSwitchOptionsCallback(callback, userData);
     }
 
     void enableHardwareDecoding(bool enabled) {
-        this->videoPlayer.enableHardwareDecoding(enabled);
+        this->videoPlayer->enableHardwareDecoding(enabled);
     }
 
 
@@ -421,6 +530,13 @@ protected:
     }
 
 private:
+    void setPlayerState(PlayerState state) {
+        PlayerState oldState = getPlayerState();
+        playerState.set(state/*, oldState*/);
+        auto e = MediaPlaybackStateChangeEvent{ STREAM_TYPES, state, oldState };
+        event(&e);
+    }
+
     // 打开文件
     bool openInput(const std::string& filePath, AVFormatContext*& fmtCtx) {
         return MediaDecodeUtils::openFile(&logger, fmtCtx, filePath);
@@ -432,5 +548,8 @@ private:
     }
 
     StreamTypes findStreams(AVFormatContext* formatCtx);
+
+    void requestTaskHandlerSeek(MediaRequestHandleEvent* e, std::any userData);
+
 };
 

@@ -38,4 +38,49 @@ public:
     constexpr bool testFlag(T v) const {
         return (value & v) == v;
     }
+    constexpr bool contains(T v) const {
+        return testFlag(v);
+    }
+    constexpr bool isEuqal(const MultiEnumTypeDefine& other) const {
+        return value == other.value;
+    }
+    constexpr bool isEuqal(const T& other) const {
+        return value == other;
+    }
+    bool operator==(const MultiEnumTypeDefine& other) const {
+        return isEuqal(other);
+    }
+    bool operator!=(const MultiEnumTypeDefine& other) const {
+        return !isEuqal(other);
+    }
+    bool operator==(const T& other) const {
+        return isEuqal(other);
+    }
+    bool operator!=(const T& other) const {
+        return !isEuqal(other);
+    }
 };
+
+template <typename T>
+constexpr MultiEnumTypeDefine<T> operator&(T lhs, const MultiEnumTypeDefine<T>& rhs)
+{
+    return rhs & lhs;
+}
+
+template <typename T>
+constexpr MultiEnumTypeDefine<T> operator|(T lhs, const MultiEnumTypeDefine<T>& rhs)
+{
+    return rhs | lhs;
+}
+
+template <typename T>
+constexpr bool operator==(const T& lhs, const MultiEnumTypeDefine<T>& rhs)
+{
+    return rhs == lhs;
+}
+
+template <typename T>
+constexpr bool operator!=(const T& lhs, const MultiEnumTypeDefine<T>& rhs)
+{
+    return rhs != lhs;
+}

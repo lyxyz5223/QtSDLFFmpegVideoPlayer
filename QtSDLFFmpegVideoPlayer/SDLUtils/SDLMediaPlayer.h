@@ -30,7 +30,7 @@ public:
     }
 public:
 
-    bool play(const std::string& filePath, SDL_WindowID winId);
+    bool play(const std::string& filePath, SDL_WindowID winId, bool enableHardwareDecoding = true);
 
     void stop() override {
         MediaPlayer::notifyStop();
@@ -49,7 +49,7 @@ protected:
 
 
 private:
-    DefinePlayerLoggerSinks(loggerSinks, "SDLMediaPlayer.class.log");
+    DefinePlayerLoggerSinks(loggerSinks, "SDLMediaPlayer");
     Logger logger{ "SDLMediaPlayer", loggerSinks };
     // setupPlayer设置播放器参数
     SDL_WindowID currentWindowId{ 0 };

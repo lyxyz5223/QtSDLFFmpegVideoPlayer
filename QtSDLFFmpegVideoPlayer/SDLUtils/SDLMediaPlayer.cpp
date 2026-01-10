@@ -146,7 +146,7 @@ SDLMediaPlayer::Size<SizeBaseType>& SDLMediaPlayer::calculateTextureSize(Size<Si
     return target;
 }
 
-bool SDLMediaPlayer::play(const std::string& filePath, SDL_WindowID winId)
+bool SDLMediaPlayer::play(const std::string& filePath, SDL_WindowID winId, bool enableHardwareDecoding)
 {
     this->currentWindowId = winId;
     this->currentTexture.reset();
@@ -156,7 +156,7 @@ bool SDLMediaPlayer::play(const std::string& filePath, SDL_WindowID winId)
     mediaOptions.rendererUserData = std::any{};
     mediaOptions.frameSwitchOptionsCallback = std::bind(&SDLMediaPlayer::frameSwitchOptionsCallback, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
     mediaOptions.frameSwitchOptionsCallbackUserData = std::any{};
-    mediaOptions.enableHardwareDecoding = false;
+    mediaOptions.enableHardwareDecoding = enableHardwareDecoding;
     bool r = MediaPlayer::play(filePath, mediaOptions);
     return r;
 }

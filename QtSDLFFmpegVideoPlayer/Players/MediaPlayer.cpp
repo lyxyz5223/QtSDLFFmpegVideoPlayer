@@ -34,3 +34,31 @@ MediaPlayer::StreamTypes MediaPlayer::findStreams(AVFormatContext* formatCtx)
     return rst;
 }
 
+void MediaPlayer::requestTaskHandlerSeek(MediaRequestHandleEvent* e, std::any userData)
+{
+    // 先将播放器状态调整至非播放中状态
+    setPlayerState(PlayerState::Seeking);
+    // 此时已经所有相关线程均已暂停
+    auto* seekEvent = static_cast<MediaSeekEvent*>(e);
+    uint64_t pts = seekEvent->timestamp();
+    StreamIndexType streamIndex = seekEvent->streamIndex();
+    int rst = av_seek_frame(demuxer->getFormatContext(), streamIndex, pts, AVSEEK_FLAG_BACKWARD);
+    if (rst < 0) // 寻找失败
+    {
+        logger.error("Error seeking to pts: {} in stream index: {}, duration: {}", pts, streamIndex, demuxer->getFormatContext()->duration);
+        // 恢复播放状态
+        setPlayerState(PlayerState::Playing);
+        return;
+    }
+    videoPlayer->clearBuffers();
+    audioPlayer->clearBuffers();
+    AVPacket* packet = nullptr;
+    demuxer->readOnePacket(&packet);
+    if (packet)
+    {
+        videoPlayer->clockSync(pts, streamIndex, false);
+        audioPlayer->clockSync(pts, streamIndex, false);
+    }
+    // 恢复播放状态
+    setPlayerState(PlayerState::Playing);
+}
