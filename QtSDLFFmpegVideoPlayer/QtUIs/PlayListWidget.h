@@ -5,19 +5,9 @@
 #include <qstringlistmodel.h>
 #include <Logger.h>
 #include "PlayerPredefine.h"
+#include "PlayListListView.h"
 
-struct PlayListTypes
-{
-    struct PlayListItem
-    {
-        QString url;
-        QString title;
-        QIcon icon;
-    };
-    using PlayList = QList<PlayListItem>;
-};
-
-class PlayListWidget : public QWidget, public PlayListTypes
+class PlayListWidget : public QWidget
 {
     Q_OBJECT
 
@@ -28,26 +18,40 @@ private:
     DefinePlayerLoggerSinks(PlayListWidgetLoggerSinks, "PlayListWidget");
     Logger logger{ "PlayListWidget" };
 
-    PlayList m_playList;
-    QStringListModel* m_playListModel{ nullptr };
+    PlayListItemListModel* m_playListModel{ nullptr };
 
     std::function<void(const QModelIndex&)> playCallback;
 
 public:
-    void setPlayList(PlayList& playlist);
+    void setPlayList(QList<PlayListItem>& playlist);
+    void setPlayList(QList<QString>& urls);
     void setPlayCallback(std::function<void(const QModelIndex&)> callback) {
         playCallback = callback;
     }
-    const PlayList& playList() const { return m_playList; }
+    const QList<PlayListItem>& playList() const { return m_playListModel->playList(); }
     PlayListItem getPlayListItem(const QModelIndex& index) const {
-        return m_playList.at(index.row());
+        return m_playListModel->playList().at(index.row());
+    }
+
+    void appendFiles() {
+        itemAdd(); // 打开文件选择对话框，并添加到播放列表
+    }
+    void appendFiles(const QStringList& urls) {
+        for (auto& url : urls)
+            appendFile(url);
+    }
+    void appendFile(const QString& url) {
+        m_playListModel->appendFile(url);
+    }
+    void appendItem(const PlayListItem& item) {
+        m_playListModel->appendItem(item);
     }
 
 protected:
 
 signals:
 
-public slots:
+private slots:
     void itemAdd();
     void itemRemove();
     void itemsClear();
@@ -61,6 +65,5 @@ private:
     Ui_PlayListWidgetClass ui;
 
     QStringList selectFiles();
-    void appendPlayListItem(const PlayListItem& item);
 };
 

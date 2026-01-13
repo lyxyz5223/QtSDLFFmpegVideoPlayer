@@ -1004,6 +1004,13 @@ public:
         }
         ///*非虚函数*/void readPackets(StreamContext* streamCtx, std::function<bool()> stopCondition); // 读取包线程函数
         /*非虚函数*/void readPackets(); // 读取包线程函数
+        void resetStreamContexts() {
+            for (auto& [key, streamCtx] : streamContexts) {
+                ConcurrentQueue<AVPacket*> tmpQueue;
+                streamCtx.packetQueue.swap(tmpQueue);
+                streamCtx.index = -1;
+            }
+        }
     };
 
 };

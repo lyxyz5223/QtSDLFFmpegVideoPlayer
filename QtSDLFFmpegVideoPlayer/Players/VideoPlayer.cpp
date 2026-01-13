@@ -37,7 +37,12 @@ bool VideoPlayer::playVideoFile()
         resetPlayer();
         return false;
     }
-
+    if (playbackStateVariables.streamIndex < 0)
+    {
+        logger.warning("No video stream selected.");
+        resetPlayer();
+        return false;
+    }
     //// 打开文件
     //if (!openInput())
     //{

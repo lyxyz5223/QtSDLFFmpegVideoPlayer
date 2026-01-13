@@ -1,16 +1,18 @@
 #include "PlayListWidget.h"
 #include <QFileDialog>
-#include <QFileIconProvider>
-
 
 PlayListWidget::PlayListWidget(QWidget* parent)
     : QWidget(parent)
 {
     ui.setupUi(this);
-    //ui.listItems->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    
-    m_playListModel = new QStringListModel(this);
+    m_playListModel = new PlayListItemListModel(this);
     ui.listItems->setModel(m_playListModel);
+    PlayListListViewItemDelegate* delegate = new PlayListListViewItemDelegate(this);
+    ui.listItems->setItemDelegate(delegate);
+
+    // test
+    //QFileInfo fileInfo("D:\\Softwares\\Jijidown\\Download\\「鏡音鈴」「Gimme×Gimme」 Sour式鏡音Rin×Sour式初音Miku[PV] - 1.gimme bili(Av84791490,P1).mp4");
+    //appendFile(fileInfo.absoluteFilePath());
 }
 
 PlayListWidget::~PlayListWidget()
@@ -18,30 +20,41 @@ PlayListWidget::~PlayListWidget()
 
 }
 
-void PlayListWidget::setPlayList(PlayList& playlist)
+void PlayListWidget::setPlayList(QList<PlayListItem>& playlist)
 {
     //m_playList = playlist;
-    m_playList.clear();
-    m_playListModel->setStringList(QStringList()); // 清空模型
+    m_playListModel->clear(); // 清空模型
     for (auto& item : playlist)
-        appendPlayListItem(item);
+        appendItem(item);
+}
+void PlayListWidget::setPlayList(QList<QString>& urls)
+{
+    //m_playList = playlist;
+    m_playListModel->clear(); // 清空模型
+    for (auto& url : urls)
+        appendFile(url);
 }
 
 void PlayListWidget::itemAdd()
 {
     QStringList&& files = selectFiles();
     if (files.isEmpty()) return;
-    for (auto& file : files)
-    {
-        QFileInfo fileInfo(file);
-        QFileIconProvider iconProvider;
-        PlayListItem item{ fileInfo.absoluteFilePath(), fileInfo.fileName(), iconProvider.icon(fileInfo) };
-        appendPlayListItem(item);
-    }
+    appendFiles(files);
 }
 
 void PlayListWidget::itemRemove()
 {
+    auto indexes = ui.listItems->selectionModel()->selectedIndexes();
+    std::sort(indexes.begin(), indexes.end(), [](const QModelIndex& a, const QModelIndex& b) {
+        return a.row() > b.row();
+        });
+    for (auto& index : indexes)
+    {
+        if (index.isValid() && index.row() < m_playListModel->rowCount())
+        {
+            m_playListModel->removeRow(index.row());
+        }
+    }
 }
 
 void PlayListWidget::itemsClear()
@@ -79,10 +92,4 @@ QStringList PlayListWidget::selectFiles()
     return files;
 }
 
-void PlayListWidget::appendPlayListItem(const PlayListItem& item)
-{
-    m_playList.append(item);
-    m_playListModel->insertRow(ui.listItems->model()->rowCount());
-    m_playListModel->setData(m_playListModel->index(m_playListModel->rowCount() - 1), item.title, Qt::DisplayRole);
-}
 

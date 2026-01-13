@@ -122,7 +122,8 @@
     <ClCompile Include="Players\MediaPlayer.cpp" />
     <ClCompile Include="Players\PlayerPredefine.cpp" />
     <ClCompile Include="Players\VideoPlayer.cpp" />
-    <ClCompile Include="PlayListWidget.cpp" />
+    <ClCompile Include="QtUIs\PlayListListView.cpp" />
+    <ClCompile Include="QtUIs\PlayListWidget.cpp" />
     <ClCompile Include="QtUIs\QtSDLFFmpegVideoPlayer.cpp" />
     <ClCompile Include="QtUIs\RoundedIconButton.cpp" />
     <ClCompile Include="QtUIs\SDLWidget.cpp" />
@@ -139,7 +140,8 @@
     <ClInclude Include="Players\MediaPlayer.h" />
     <ClInclude Include="Players\PlayerPredefine.h" />
     <ClInclude Include="Players\VideoPlayer.h" />
-    <QtMoc Include="PlayListWidget.h" />
+    <QtMoc Include="QtUIs\PlayListWidget.h" />
+    <QtMoc Include="QtUIs\PlayListListView.h" />
     <ClInclude Include="QtUIs\SDLWidget.h" />
     <ClInclude Include="SDLUtils\SDLApp.h" />
     <ClInclude Include="SDLUtils\SDLMediaPlayer.h" />
@@ -151,7 +153,7 @@
     <QtMoc Include="QtUIs\QtSDLFFmpegVideoPlayer.h" />
   </ItemGroup>
   <ItemGroup>
-    <QtUic Include="PlayListWidget.ui" />
+    <QtUic Include="QtUIs\PlayListWidget.ui" />
     <QtUic Include="QtUIs\QtSDLFFmpegVideoPlayer.ui" />
   </ItemGroup>
   <ItemGroup>

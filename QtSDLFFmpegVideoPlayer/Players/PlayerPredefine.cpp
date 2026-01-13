@@ -233,6 +233,11 @@ bool MediaDecodeUtils::findAndOpenAudioDecoder(Logger* logger, AVFormatContext* 
 }
 bool MediaDecodeUtils::findAndOpenVideoDecoder(Logger* logger, AVFormatContext* formatCtx, StreamIndexType streamIndex, UniquePtr<AVCodecContext>& codecContext, bool useHardwareDecoder, AVHWDeviceType* hwDeviceType, AVPixelFormat* hwPixelFormat)
 {
+    if (streamIndex < 0)
+    {
+        logger->error("Stream index is negative");
+        return false;
+    }
     auto* videoCodecPar = formatCtx->streams[streamIndex]->codecpar;
     // 对每个视频流都尝试初始化解码器
     const AVCodec* videoCodec = avcodec_find_decoder(videoCodecPar->codec_id); // 查找解码器，不需要手动释放
@@ -400,6 +405,7 @@ bool PlayerTypes::SingleDemuxer::selectStreamsIndices(StreamTypes streams, Strea
 {
     if (!selector)
         return false;
+    this->streamIndex = -1;
     bool result = true;
     streamTypesVisit(streams, [this, &result, &selector](StreamType streamType, std::any) -> bool {
         if (this->streamType != streamType)
@@ -517,6 +523,8 @@ bool PlayerTypes::UnifiedDemuxer::selectStreamsIndices(StreamTypes streams, Stre
 {
     if (!selector)
         return false;
+    // 清空上下文中保存的索引
+    resetStreamContexts();
     bool result = true;
     streamTypesVisit(streams, [this, &result, &selector](StreamType streamType, std::any) -> bool {
         // 保存当前流类型

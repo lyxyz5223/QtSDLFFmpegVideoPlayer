@@ -74,8 +74,11 @@
     <ClCompile Include="QtUIs\SDLWidget.cpp">
       <Filter>QtUIs\SDLs</Filter>
     </ClCompile>
-    <ClCompile Include="PlayListWidget.cpp">
-      <Filter>1Source Files</Filter>
+    <ClCompile Include="QtUIs\PlayListWidget.cpp">
+      <Filter>QtUIs</Filter>
+    </ClCompile>
+    <ClCompile Include="QtUIs\PlayListListView.cpp">
+      <Filter>QtUIs</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -129,15 +132,18 @@
     <QtMoc Include="QtUIs\RoundedIconButton.h">
       <Filter>QtUIs</Filter>
     </QtMoc>
-    <QtMoc Include="PlayListWidget.h">
-      <Filter>1Header Files</Filter>
+    <QtMoc Include="QtUIs\PlayListWidget.h">
+      <Filter>QtUIs</Filter>
+    </QtMoc>
+    <QtMoc Include="QtUIs\PlayListListView.h">
+      <Filter>QtUIs</Filter>
     </QtMoc>
   </ItemGroup>
   <ItemGroup>
     <QtUic Include="QtUIs\QtSDLFFmpegVideoPlayer.ui">
       <Filter>QtUIs\Form Files</Filter>
     </QtUic>
-    <QtUic Include="PlayListWidget.ui">
+    <QtUic Include="QtUIs\PlayListWidget.ui">
       <Filter>QtUIs\Form Files</Filter>
     </QtUic>
   </ItemGroup>

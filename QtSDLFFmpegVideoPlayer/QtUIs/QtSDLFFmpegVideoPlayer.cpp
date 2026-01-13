@@ -2,7 +2,7 @@
 #include "SDLApp.h"
 #include <QTimer>
 #include <QFileDialog>
-#include <PlayListWidget.h>
+#include "PlayListWidget.h"
 
 QtSDLFFmpegVideoPlayer::QtSDLFFmpegVideoPlayer(QWidget* parent)
     : QMainWindow(parent)
@@ -60,7 +60,7 @@ void QtSDLFFmpegVideoPlayer::selectFileAndPlay()
 {
     auto& playlist = ui.playListDockWidgetContents->playList();
     auto oldSize = playlist.size();
-    ui.playListDockWidgetContents->itemAdd();
+    ui.playListDockWidgetContents->appendFiles();
     if (!playlist.size() || playlist.size() <= oldSize) return;
     playerPlay(playlist.at(oldSize).url);
 }
