@@ -9,12 +9,11 @@ QtSDLFFmpegVideoPlayer::QtSDLFFmpegVideoPlayer(QWidget* parent)
 {
     ui.setupUi(this);
     ui.playListDockWidgetContents->setPlayCallback([this](const QModelIndex& index) {
-        QString filePath = ui.playListDockWidgetContents->getPlayListItem(index).url;
-        playerPlay(filePath);
+        playerPlayByPlayListIndex(index.row());
         });
-
-    ui.videoRenderWidget->setAttribute(Qt::WA_PaintOnScreen);
-    ui.videoRenderWidget->setAttribute(Qt::WA_NativeWindow);
+    ui.videoRenderWidget->setAttribute(Qt::WA_OpaquePaintEvent, true);
+    ui.videoRenderWidget->setAttribute(Qt::WA_PaintOnScreen, true);
+    ui.videoRenderWidget->setAttribute(Qt::WA_NativeWindow, true);
     ui.videoRenderWidget->resize(size());
     ui.videoRenderWidget->show();
     sdlWidget = new SDLWidget((HWND)ui.videoRenderWidget->winId());
@@ -27,6 +26,12 @@ QtSDLFFmpegVideoPlayer::QtSDLFFmpegVideoPlayer(QWidget* parent)
     ui.actionQuit->connect(ui.actionQuit, &QAction::triggered, [&]() {
         this->close();
         });
+    QBrush ctrlBtnBkgBrush(QColor(200, 200, 200, 50));
+    ui.btnPlayPause->setBackgroundBrush(ctrlBtnBkgBrush);
+    ui.btnPrevious->setBackgroundBrush(ctrlBtnBkgBrush);
+    ui.btnNext->setBackgroundBrush(ctrlBtnBkgBrush);
+    ui.btnStop->setBackgroundBrush(ctrlBtnBkgBrush);
+    ui.btnVolume->setBackgroundBrush(Qt::transparent);
     //mediaPlayer.setRenderEventCallback(std::bind(&QtSDLFFmpegVideoPlayer::renderCallback, this, std::placeholders::_1, std::placeholders::_2), MediaPlayer::VideoUserDataType{});
     //mediaPlayer.setStartEventCallback(std::bind(&QtSDLFFmpegVideoPlayer::beforePlaybackCallback, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3), MediaPlayer::VideoUserDataType{});
 }
@@ -80,12 +85,12 @@ void QtSDLFFmpegVideoPlayer::mediaStop()
 
 void QtSDLFFmpegVideoPlayer::mediaPrevious()
 {
-
+    playerPlayByPlayListIndex(ui.playListDockWidgetContents->getPreviousPlayingIndex()); // 内部会自动设置当前播放项
 }
 
 void QtSDLFFmpegVideoPlayer::mediaNext()
 {
-
+    playerPlayByPlayListIndex(ui.playListDockWidgetContents->getNextPlayingIndex()); // 内部会自动设置当前播放项
 }
 
 void QtSDLFFmpegVideoPlayer::mediaSeek()
@@ -112,6 +117,16 @@ void QtSDLFFmpegVideoPlayer::mediaSliderReleased()
 void QtSDLFFmpegVideoPlayer::mediaSliderValueChanged(int value)
 {
     logger.trace("Current slider time: {} ms", value);
+}
+
+void QtSDLFFmpegVideoPlayer::mediaVolumeMuteUnmute()
+{
+
+}
+
+void QtSDLFFmpegVideoPlayer::mediaVolumeSliderMoved()
+{
+
 }
 
 void QtSDLFFmpegVideoPlayer::beforePlaybackCallback(const AVFormatContext* formatCtx, const AVCodecContext* videoCodecCtx)
@@ -153,5 +168,12 @@ void QtSDLFFmpegVideoPlayer::playerPlay(QString filePath)
         mediaPlayer.play(filePath.toStdString(), SDLApp::getWindowId(sdlWidget->getSDLWindow()));
         logger.info() << "Media playback Finished";
         }).detach();
+}
+
+void QtSDLFFmpegVideoPlayer::playerPlayByPlayListIndex(qsizetype index)
+{
+    QString filePath = ui.playListDockWidgetContents->getPlayListItem(index).url;
+    ui.playListDockWidgetContents->setCurrentPlayingIndex(index);
+    playerPlay(filePath);
 }
 

@@ -18,12 +18,13 @@ public:
     QPen getPen() const {
         return pen;
     }
-    void setBrush(QBrush brush) {
-        this->brush = brush;
+    void setBackgroundBrush(QBrush brush) {
+        this->bkgBrush = brush;
     }
-    QBrush getBrush() const {
-        return brush;
+    QBrush getBackgroundBrush() const {
+        return bkgBrush;
     }
+
     void setIconSize(QSize size) {
         QSize s(size);
         iconSize = s;
@@ -50,17 +51,30 @@ public:
     bool hitTest(const QPoint& pos) const;
 
 protected:
-    void paintEvent(QPaintEvent*) override;
-    void resizeEvent(QResizeEvent* e) override;
-    bool hitButton(const QPoint& pos) const override;
-
+    virtual void paintEvent(QPaintEvent*) override;
+    virtual void resizeEvent(QResizeEvent* e) override;
+    virtual bool hitButton(const QPoint& pos) const override;
+    virtual void mouseMoveEvent(QMouseEvent* e) override;
+    virtual void mousePressEvent(QMouseEvent* e) override;
+    virtual void mouseReleaseEvent(QMouseEvent* e) override;
+    virtual void enterEvent(QEnterEvent* event) override;
+    virtual void leaveEvent(QEvent* event) override;
+    
 signals:
 
 public slots:
 
 private:
     QPen pen{ Qt::NoPen };
-    QBrush brush{ QColor(238, 180, 180) };
+    QBrush bkgBrush{ QColor(238, 180, 180, 0) };
+    QColor normalIconColor{ Qt::black };
+    QColor hoveredIconColor{ QColor(205, 183, 181) }; // MistyRose3
+    QColor selectedIconColor{ QColor(139, 125, 123) }; // MistyRose4
+    //QColor hoveredIconColor{ QColor(255, 240, 245) }; // LavenderBlush
+    //QColor selectedIconColor{ QColor(255, 228, 225) }; // MistyRose
+    bool mousePressed{ false };
+    bool mouseHovered{ false };
+
     //QBrush brush{ Qt::NoBrush };
     QSize iconSize{ 16, 16 };
     QPixmap iconPixmap{ icon().pixmap(iconSize, QIcon::Mode::Normal, QIcon::State::Off) };
@@ -74,5 +88,6 @@ private:
     }
     Qt::SizeMode roundMode = Qt::AbsoluteSize;
     QPainterPath roundedBtnPath;
+    QPixmap iconToColoredPixmap(const QIcon& icon, QSize size, QColor color);
 };
 

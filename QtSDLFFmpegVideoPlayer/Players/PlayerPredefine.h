@@ -22,6 +22,7 @@ extern "C"
 {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavfilter/avfilter.h> // 音量调节，倍速等
 #include <libswscale/swscale.h>
 #include <libswresample/swresample.h>
 #include <libavutil/imgutils.h>
@@ -75,6 +76,14 @@ public:
     using AVFormatContextConstDeleter = ConstDeleter<AVFormatContext>;
     // AVFormatContext智能指针删除器
     static AVFormatContextConstDeleter constDeleterAVFormatContext;
+    // AVFilterContext删除器类型
+    using AVFilterContextConstDeleter = ConstDeleter<AVFilterContext>;
+    // AVFilterContext智能指针删除器
+    static AVFilterContextConstDeleter constDeleterAVFilterContext;
+    // AVFilterGraph删除器类型
+    using AVFilterGraphConstDeleter = ConstDeleter<AVFilterGraph>;
+    // AVFilterGraph智能指针删除器
+    static AVFilterGraphConstDeleter constDeleterAVFilterGraph;
 
     inline constexpr static auto ThreadSleepMs = SleepForMs;
     inline constexpr static auto ThreadYield = std::this_thread::yield;
@@ -155,6 +164,7 @@ public:
     class Atomic : public std::atomic<T> {
     public:
         using std::atomic<T>::atomic;
+        using std::atomic<T>::operator=;
         virtual void set(T s) {
             auto tmp = this->load();
             while (!this->compare_exchange_strong(tmp, s));
@@ -351,6 +361,7 @@ public:
         StreamTypes stream{ StreamType::STNone };
     public:
         MediaEvent(MediaEventType t, StreamType st) : eventType(t), stream(st) {}
+        virtual ~MediaEvent() = default;
         virtual MediaEventType type() const { return this->eventType; }
         // 可能包含多种流，这取决于对象（如VideoPlayer只包含STVideo，而MediaPlayer可能包含STVideo|STAudio）
         virtual StreamTypes streamType() const { return this->stream; }
@@ -968,6 +979,11 @@ public:
             joined.store(false);
             //for (auto& [key, streamCtx] : streamContexts)
             //    demuxerThreads.try_emplace(key, &UnifiedDemuxer::readPackets, this, &streamCtx, stopCondition);
+            if (demuxerThread.joinable()) // 如果之前的线程还在运行，先等待其结束
+            {
+                stopNoLock();
+                demuxerThread.join();
+            }
             demuxerThread = std::thread(
                 //static_cast<void(UnifiedDemuxer::*)(std::function<bool()>)>(&UnifiedDemuxer::readPackets), this, stopCondition
                 [this]() {
@@ -979,11 +995,7 @@ public:
         }
         virtual void stop() override {
             std::lock_guard lock(mtxDemuxerStartStop);
-            if (!started.load()) return;
-            stopped.set(true);
-            threadStateController.enableWakeUp();
-            threadStateController.wakeUp();
-            waitStopped.wait(true);
+            stopNoLock();
         }
         // 仅初次调用有效，直到线程结束
         virtual void waitStop() override {
@@ -1002,6 +1014,14 @@ public:
         bool shouldStop() const {
             return stopped.load();
         }
+        void stopNoLock() {
+            if (!started.load()) return;
+            stopped.set(true);
+            threadStateController.enableWakeUp();
+            threadStateController.wakeUp();
+            waitStopped.wait(true);
+        }
+
         ///*非虚函数*/void readPackets(StreamContext* streamCtx, std::function<bool()> stopCondition); // 读取包线程函数
         /*非虚函数*/void readPackets(); // 读取包线程函数
         void resetStreamContexts() {
@@ -1013,6 +1033,35 @@ public:
         }
     };
 
+    struct FrameFilter {
+        virtual void filter(AVFrame* frame) = 0;
+        FrameFilter() = default;
+        virtual ~FrameFilter() = default;
+    private:
+        // 禁止拷贝与赋值
+        FrameFilter(const FrameFilter&) = delete;
+        FrameFilter& operator=(const FrameFilter&) = delete;
+    };
+
+    class FrameVolumeFilter : public FrameFilter {
+        AVCodecContext* codecCtx{ nullptr };
+        AtomicDouble vol{ 1.0 }; // 音量: [0.0, 1.0]
+        UniquePtr<AVFilterContext> srcCtx{ nullptr };
+        UniquePtr<AVFilterContext> volumeCtx{ nullptr };
+        UniquePtr<AVFilterContext> sinkCtx{ nullptr };
+    public:
+        FrameVolumeFilter(AVCodecContext* codecCtx, double volume = 1.0) : codecCtx(codecCtx), vol(volume) {}
+        ~FrameVolumeFilter() = default;
+        virtual void filter(AVFrame* frame) override;
+        virtual void setVolume(double vol) {
+            if (vol < 0.0) vol = 0.0;
+            if (vol > 100.0) vol = 100.0;
+            this->vol.store(vol);
+        }
+        virtual double volume() const {
+            return vol.load();
+        }
+    };
 };
 
 class MediaDecodeUtils : public PlayerTypes
@@ -1084,10 +1133,10 @@ public:
         // 系统时钟
         double realtimeClock{ 0.0 };
     };
-    void requestTaskHandlerSeek(
-        AVFormatContext* formatCtx, std::vector<AVCodecContext*> codecCtxList,
-        std::function<void(PlayerState)> playerStateSetter, std::function<void()> clearPktAndFrameQueuesFunc,
-        MediaRequestHandleEvent* e, std::any userData);
+    //void requestTaskHandlerSeek(
+    //    AVFormatContext* formatCtx, std::vector<AVCodecContext*> codecCtxList,
+    //    std::function<void(PlayerState)> playerStateSetter, std::function<void()> clearPktAndFrameQueuesFunc,
+    //    MediaRequestHandleEvent* e, std::any userData);
 public:
     PlayerInterface(Logger& logger) : logger(logger) {}
     virtual ~PlayerInterface() = default;
@@ -1096,6 +1145,11 @@ public:
     virtual void pause() = 0;
     virtual void notifyStop() = 0;
     virtual void stop() = 0;
+    virtual void setMute(bool state) = 0;
+    virtual bool getMute() const = 0;
+    // volume range: [0.0, 1.0]
+    virtual void setVolume(double volume) = 0;
+    virtual double getVolume() const = 0;
     virtual void notifySeek(uint64_t pts, StreamIndexType streamIndex = -1) = 0;
     virtual void seek(uint64_t pts, StreamIndexType streamIndex = -1) = 0;
     virtual bool isPlaying() const = 0;
@@ -1123,7 +1177,7 @@ protected:
     virtual bool event(MediaEvent* e);
     // 播放状态改变事件（重写该方法不会影响其子事件（start,pause,resume,stop）的事件分发）
     virtual void playbackStateChangeEvent(MediaPlaybackStateChangeEvent* e) {}
-    // 已经开始播放事件（启动解码渲染线程前），隶属于播放状态改变事件
+    // 已经开始播放事件（启动渲染线程前，不保证是否已经启动解码线程），隶属于播放状态改变事件
     virtual void startEvent(MediaPlaybackStateChangeEvent* e) {}
     // 暂停播放事件，隶属于播放状态改变事件
     virtual void pauseEvent(MediaPlaybackStateChangeEvent* e) {}

@@ -1,6 +1,6 @@
 #include "AudioPlayer.h"
 
-bool AudioPlayer::playAudioFile()
+bool AudioPlayer::prepareBeforePlayback()
 {
     waitStopped.set(false);
     auto demuxerMode = this->demuxerMode;
@@ -10,17 +10,17 @@ bool AudioPlayer::playAudioFile()
         auto& psv = playbackStateVariables;
         if (demuxerMode == ComponentWorkMode::Internal)
         {
-            psv.demuxer = internalDemuxer;
-            psv.demuxer->setPacketEnqueueCallback(playbackStateVariables.demuxerStreamType, std::bind(&AudioPlayer::packetEnqueueCallback, this));
-            psv.demuxer->openAndSelectStreams(psv.filePath, psv.demuxerStreamType, psv.playOptions.streamIndexSelector);
+            psv.demuxer.store(internalDemuxer.get());
+            psv.demuxer.load()->setPacketEnqueueCallback(playbackStateVariables.demuxerStreamType, std::bind(&AudioPlayer::packetEnqueueCallback, this));
+            psv.demuxer.load()->openAndSelectStreams(psv.filePath, psv.demuxerStreamType, psv.playOptions.streamIndexSelector);
         }
         else/* if (demuxerMode == DemuxerMode::External)*/
-            psv.demuxer = externalDemuxer;
-        if (!psv.demuxer) // 解复用器不存在，通常为外部解复用器指针为空
+            psv.demuxer.store(externalDemuxer.get());
+        if (!psv.demuxer.load()) // 解复用器不存在，通常为外部解复用器指针为空
             throw std::runtime_error("Demuxer is nullptr.");
-        psv.formatCtx = psv.demuxer->getFormatContext();
-        psv.streamIndex = psv.demuxer->getStreamIndex(psv.demuxerStreamType);
-        psv.packetQueue = psv.demuxer->getPacketQueue(psv.demuxerStreamType);
+        psv.formatCtx = psv.demuxer.load()->getFormatContext();
+        psv.streamIndex = psv.demuxer.load()->getStreamIndex(psv.demuxerStreamType);
+        psv.packetQueue = psv.demuxer.load()->getPacketQueue(psv.demuxerStreamType);
 
         if (requestTaskQueueHandlerMode == ComponentWorkMode::Internal)
         {
@@ -77,16 +77,19 @@ bool AudioPlayer::playAudioFile()
         resetPlayer();
         return false;
     }
-
     // 修改状态为：播放中
     setPlayerState(PlayerState::Playing);
+}
+
+bool AudioPlayer::playAudioFile()
+{
     // 启动处理线程
     if (requestTaskQueueHandlerMode == ComponentWorkMode::Internal)
         playbackStateVariables.requestQueueHandler->start();
     // 启动读包
     //std::thread threadReadPackets(&AudioPlayer::readPackets, this);
     if (demuxerMode == ComponentWorkMode::Internal)
-        playbackStateVariables.demuxer->start(); // 启动解复用器读取线程
+        playbackStateVariables.demuxer.load()->start(); // 启动解复用器读取线程
     // 启动包转音频流
     std::thread threadPacket2AudioStreams(&AudioPlayer::packet2AudioStreams, this);
     // 启动渲染音频
@@ -101,14 +104,18 @@ bool AudioPlayer::playAudioFile()
     if (threadRenderAudio.joinable())
         threadRenderAudio.join();
     if (demuxerMode == ComponentWorkMode::Internal)
-        playbackStateVariables.demuxer->waitStop(); // 等待解复用器停止
+        playbackStateVariables.demuxer.load()->waitStop(); // 等待解复用器停止
+    return true;
+}
+
+void AudioPlayer::cleanupAfterPlayback()
+{
     // 关闭音频输出流
     stopAndCloseOutputAudioStream();
     // 恢复播放器状态
     resetPlayer();
     // 通知停止
     waitStopped.setAndNotifyAll(true);
-    return true;
 }
 
 void AudioPlayer::audioOutputStreamErrorCallback(AudioAdapter::AudioErrorType type, const std::string& errorText)
@@ -319,6 +326,7 @@ bool AudioPlayer::findAndOpenAudioDecoder()
 //    }
 //}
 
+
 // 音频包解码线程函数
 void AudioPlayer::packet2AudioStreams()
 {
@@ -357,7 +365,7 @@ void AudioPlayer::packet2AudioStreams()
             continue; // 如果音频流队列中有太多数据，等待消费掉一些再继续解码
         }
         if (getQueueSize(*playbackStateVariables.packetQueue) < MIN_AUDIO_PACKET_QUEUE_SIZE)
-            playbackStateVariables.demuxer->wakeUp(); // 包队列数据过少，唤醒解复用器读取更多数据
+            playbackStateVariables.demuxer.load()->wakeUp(); // 包队列数据过少，唤醒解复用器读取更多数据
 
 
         logger.trace("Current audio stream queue size: {}", streamQueueSize);

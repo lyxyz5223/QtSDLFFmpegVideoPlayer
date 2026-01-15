@@ -1,5 +1,6 @@
 #include "PlayListWidget.h"
 #include <QFileDialog>
+#include <QResizeEvent>
 
 PlayListWidget::PlayListWidget(QWidget* parent)
     : QWidget(parent)
@@ -9,6 +10,7 @@ PlayListWidget::PlayListWidget(QWidget* parent)
     ui.listItems->setModel(m_playListModel);
     PlayListListViewItemDelegate* delegate = new PlayListListViewItemDelegate(this);
     ui.listItems->setItemDelegate(delegate);
+    ui.listItems->setAutoFillBackground(true);
 
     // test
     //QFileInfo fileInfo("D:\\Softwares\\Jijidown\\Download\\「鏡音鈴」「Gimme×Gimme」 Sour式鏡音Rin×Sour式初音Miku[PV] - 1.gimme bili(Av84791490,P1).mp4");
@@ -35,11 +37,56 @@ void PlayListWidget::setPlayList(QList<QString>& urls)
         appendFile(url);
 }
 
+qsizetype PlayListWidget::getNextPlayingIndex(bool* overflow) const
+{
+    auto curIdx = getCurrentPlayingIndex();
+    auto playListSize = getPlayListSize();
+    if (playListSize > 0 && curIdx == playListSize - 1) // 隐含curIdx != -1
+    {
+        if (overflow) *overflow = true;
+        curIdx = 0; // 当前是列表末尾，切换到列表开头
+    }
+    else
+    {
+        if (overflow) *overflow = false;
+        ++curIdx;
+    }
+    return curIdx;
+}
+
+qsizetype PlayListWidget::getPreviousPlayingIndex(bool* overflow) const
+{
+    auto curIdx = getCurrentPlayingIndex();
+    auto playListSize = getPlayListSize();
+    if (playListSize > 0 && curIdx == 0) // 隐含curIdx != -1
+    {
+        if (overflow) *overflow = true;
+        curIdx = playListSize - 1; // 当前是列表开头，切换到列表末尾
+    }
+    else
+    {
+        if (overflow) *overflow = false;
+        --curIdx;
+    }
+    return curIdx;
+}
+
 void PlayListWidget::itemAdd()
 {
     QStringList&& files = selectFiles();
     if (files.isEmpty()) return;
     appendFiles(files);
+}
+
+void PlayListWidget::resizeEvent(QResizeEvent* e)
+{
+    QSize oldSize = e->oldSize();
+    QSize newSize = e->size();
+    //if (newSize.width() / newSize.height() > 3)
+    //    ui.listItems->setViewMode(QListView::IconMode);
+    //else
+    //    ui.listItems->setViewMode(QListView::ListMode);
+    QWidget::resizeEvent(e);
 }
 
 void PlayListWidget::itemRemove()

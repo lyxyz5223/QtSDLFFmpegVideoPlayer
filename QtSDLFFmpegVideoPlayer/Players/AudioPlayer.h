@@ -99,7 +99,7 @@ private:
 
         // 解复用器
         StreamType demuxerStreamType{ STREAM_TYPES };
-        SharedPtr<DemuxerInterface> demuxer{ nullptr };
+        Atomic<DemuxerInterface*> demuxer{ nullptr };
         AVFormatContext* formatCtx{ nullptr };
         StreamIndexType streamIndex{ -1 };
         ConcurrentQueue<AVPacket*>* packetQueue{ nullptr };
@@ -117,7 +117,7 @@ private:
         RequestTaskQueueHandler* requestQueueHandler{ nullptr };
 
         void clearPktAndStreamQueues() {
-            demuxer->flushPacketQueue(demuxerStreamType);
+            demuxer.load()->flushPacketQueue(demuxerStreamType);
             Queue<AudioStreamInfo> streamQueueNew;
             streamQueue.swap(streamQueueNew);
         }
@@ -148,6 +148,7 @@ private:
     Logger logger{ loggerName, loggerSinks };
 
     // 播放器状态
+    Mutex mtxSinglePlayback;
     Atomic<PlayerState> playerState{ PlayerState::Stopped };
     AtomicWaitObject<bool> waitStopped{ false }; // true表示已停止，false表示未停止
     AudioPlaybackStateVariables playbackStateVariables{ this };
@@ -169,22 +170,36 @@ public:
     }
     // options如果非空则覆盖之前的选项
     bool play(const std::string& filePath, const AudioPlayOptions& options) {
+        std::unique_lock lockMtxSinglePlayback(mtxSinglePlayback);
         if (!isStopped())
             return false;
         if (!trySetPlayerState(PlayerState::Preparing))
             return false;
         setFilePath(filePath);
         playbackStateVariables.playOptions.mergeFrom(options);
-        return playAudioFile();
+        if (!prepareBeforePlayback())
+            return false;
+        lockMtxSinglePlayback.unlock();
+        bool rst = playAudioFile();
+        lockMtxSinglePlayback.lock();
+        cleanupAfterPlayback();
+        return rst;
     }
     virtual bool play() override {
+        std::unique_lock lockMtxSinglePlayback(mtxSinglePlayback);
         if (!isStopped())
             return false;
         if (!trySetPlayerState(PlayerState::Preparing))
             return false;
         if (playbackStateVariables.filePath.empty()) // 打开了文件才能播放
             return false;
-        return playAudioFile(); // 重新播放
+        if (!prepareBeforePlayback())
+            return false;
+        lockMtxSinglePlayback.unlock();
+        bool rst = playAudioFile();
+        lockMtxSinglePlayback.lock();
+        cleanupAfterPlayback();
+        return rst;
     }
 
     virtual void resume() override { // 用于从暂停/停止状态恢复播放
@@ -205,13 +220,15 @@ public:
         }
     }
     virtual void notifyStop() override {
+        std::unique_lock lockMtxSinglePlayback(mtxSinglePlayback);
         if (playerState != PlayerState::Stopping && !isStopped())
         {
             setPlayerState(PlayerState::Stopping);
+            lockMtxSinglePlayback.unlock();
             // 唤醒解复用器线程
             if (demuxerMode == ComponentWorkMode::Internal)
             {
-                playbackStateVariables.demuxer->stop();
+                playbackStateVariables.demuxer.load()->stop();
                 //playbackStateVariables.demuxer->stop(); // 这里不调用stop，因为start的时候传递了stopCondition用于决定何时退出，所以这里只需要唤醒即可
                 //playbackStateVariables.demuxer->wakeUp();
             }
@@ -228,6 +245,19 @@ public:
             notifyStop();
             waitStopped.wait(true); // 等待停止完成
         }
+    }
+
+    virtual void setMute(bool state) override {
+        
+    }
+    virtual bool getMute() const override {
+        return false;
+    }
+    virtual void setVolume(double volume) override {
+
+    }
+    virtual double getVolume() const override {
+        return 1.0;
     }
 
     // \param streamIndex -1表示使用AV_TIME_BASE计算，否则使用streamIndex指定的流的time_base
@@ -327,7 +357,8 @@ protected:
         // 清空队列
         playbackStateVariables.clearPktAndStreamQueues();
         // 刷新解码器buffer
-        avcodec_flush_buffers(playbackStateVariables.codecCtx.get());
+        if (playbackStateVariables.codecCtx)
+            avcodec_flush_buffers(playbackStateVariables.codecCtx.get());
     }
     int64_t clockSync(size_t pts, StreamIndexType streamIndex, bool isStable) {
         if (streamIndex >= 0 && streamIndex < playbackStateVariables.formatCtx->nb_streams)
@@ -386,16 +417,19 @@ private:
                 //std::vector<ThreadStateManager::ThreadStateController> waitObjs;
                 auto& ctx = std::any_cast<ThreadBlockerAwakenerContext&>(userData);
                 ctx.waitObjs.clear();
-                threadBlocker(logger, taskItem.blockTargetThreadIds, playbackStateVariables.threadStateManager, playbackStateVariables.demuxer.get(), ctx.waitObjs, ctx.demuxerPaused);
+                threadBlocker(logger, taskItem.blockTargetThreadIds, playbackStateVariables.threadStateManager, playbackStateVariables.demuxer.load(), ctx.waitObjs, ctx.demuxerPaused);
             },
             [&](const RequestTaskItem& taskItem, std::any& userData) {
                 auto& ctx = std::any_cast<ThreadBlockerAwakenerContext&>(userData);
-                threadAwakener(ctx.waitObjs, playbackStateVariables.demuxer.get(), ctx.demuxerPaused);
+                threadAwakener(ctx.waitObjs, playbackStateVariables.demuxer.load(), ctx.demuxerPaused);
             },
             threadBlockerAwakenerContext);
     }
 
+    bool prepareBeforePlayback();
     bool playAudioFile();
+    // 播放完成后清理播放器
+    void cleanupAfterPlayback();
 
     void audioOutputStreamErrorCallback(AudioAdapter::AudioErrorType type, const std::string& errorText);
     
@@ -433,12 +467,15 @@ private:
     //void readPackets();
 
     // （如果包队列少于或等于某个最小值）通知解码器有新包到达
-    void packetEnqueueCallback() {
+    void packetEnqueueCallback() { // 该函数内不能轻易使用playbackStateVariables中的packetQueue,formatCtx,streamIndex
+        if (!playbackStateVariables.demuxer.load()) return;
         // 解复用器每次成功入队一个包后调用该回调函数，通知解码器继续解码
-        if (getQueueSize(*playbackStateVariables.packetQueue) <= playbackStateVariables.demuxer->getMinPacketQueueSize(playbackStateVariables.demuxerStreamType))
+        if (getQueueSize(*playbackStateVariables.demuxer.load()->getPacketQueue(playbackStateVariables.demuxerStreamType)) <= playbackStateVariables.demuxer.load()->getMinPacketQueueSize(playbackStateVariables.demuxerStreamType))
             playbackStateVariables.threadStateManager.wakeUpById(ThreadIdentifier::Decoder);
     }
 
+    // 音频帧调整
+    
     // 将包转化为音频输出流
     void packet2AudioStreams();
 

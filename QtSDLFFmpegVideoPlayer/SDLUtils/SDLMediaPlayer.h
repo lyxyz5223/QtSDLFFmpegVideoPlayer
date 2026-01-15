@@ -30,7 +30,8 @@ public:
     }
 public:
 
-    bool play(const std::string& filePath, SDL_WindowID winId, bool enableHardwareDecoding = true);
+    bool play(const std::string& filePath, SDL_WindowID winId, bool enableHardwareDecoding);
+    bool play(const std::string& filePath, SDL_WindowID winId, VideoDecodeType videoDecodeType = VideoDecodeType::Unset);
 
     void stop() override {
         MediaPlayer::notifyStop();

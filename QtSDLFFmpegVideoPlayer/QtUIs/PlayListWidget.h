@@ -29,9 +29,25 @@ public:
         playCallback = callback;
     }
     const QList<PlayListItem>& playList() const { return m_playListModel->playList(); }
+    qsizetype getPlayListSize() const { return m_playListModel->playList().size(); }
     PlayListItem getPlayListItem(const QModelIndex& index) const {
         return m_playListModel->playList().at(index.row());
     }
+    PlayListItem getPlayListItem(qsizetype index) const {
+        return m_playListModel->playList().at(index);
+    }
+
+    void setCurrentPlayingIndex(qsizetype index) {
+        m_playListModel->setCurrentPlayingIndex(index); // 会触发视图更新
+    }
+
+    qsizetype getCurrentPlayingIndex() const {
+        return m_playListModel->currentPlayingIndex();
+    }
+
+    qsizetype getNextPlayingIndex(bool* overflow = nullptr) const;
+
+    qsizetype getPreviousPlayingIndex(bool* overflow = nullptr) const;
 
     void appendFiles() {
         itemAdd(); // 打开文件选择对话框，并添加到播放列表
@@ -48,6 +64,7 @@ public:
     }
 
 protected:
+    virtual void resizeEvent(QResizeEvent* e) override;
 
 signals:
 

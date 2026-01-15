@@ -31,14 +31,14 @@ public:
     using MediaStreamIndexSelector = std::function<bool(StreamIndexType& videoStreamIndex, StreamIndexType& audioStreamIndex, const std::unordered_multimap<StreamType, StreamIndexType>& multimapStreamIndices, const AVFormatContext* fmtCtx, const AVCodecContext* codecCtx)>;
     using VideoRenderEvent = VideoPlayer::VideoRenderEvent;
     using AudioRenderEvent = AudioPlayer::AudioRenderEvent;
-
+    using VideoDecodeType = VideoPlayer::DecodeType;
 
     struct MediaPlayOptions {
         VideoRenderFunction renderer{ nullptr }; // Video
         VideoUserDataType rendererUserData{ VideoUserDataType{} }; // Video
         VideoFrameSwitchOptionsCallback frameSwitchOptionsCallback{ nullptr }; // Video
         VideoUserDataType frameSwitchOptionsCallbackUserData{ VideoUserDataType{} }; // Video
-        bool enableHardwareDecoding{ false }; // Video
+        VideoDecodeType decodeType{ VideoDecodeType::Unset/*默认,不设置*/ }; // Video
     };
 
     class MediaVideoPlayer : public VideoPlayer {
@@ -58,8 +58,6 @@ public:
         }
         virtual void startEvent(MediaPlaybackStateChangeEvent* e) override {
             player.logger.info("Video playback started.");
-            if (player.demuxerMode == ComponentWorkMode::External)
-                player.demuxer->start();
         }
         virtual void pauseEvent(MediaPlaybackStateChangeEvent* e) override {
             player.logger.info("Video playback paused.");
@@ -121,8 +119,6 @@ public:
         }
         virtual void startEvent(MediaPlaybackStateChangeEvent* e) override {
             player.logger.info("Audio playback started.");
-            if (player.demuxerMode == ComponentWorkMode::External)
-                player.demuxer->start();
         }
         virtual void pauseEvent(MediaPlaybackStateChangeEvent* e) override {
             player.logger.info("Audio playback paused.");
@@ -168,6 +164,9 @@ private:
     DefinePlayerLoggerSinks(loggerSinks, loggerName);
     Logger logger{ loggerName, loggerSinks };
 //protected:
+    Mutex singlePlaybackMtx; // 单次播放互斥锁
+    AtomicBool isPlayingFlag{ false }; // 是否正在播放标志
+
     std::string filePath;
     Atomic<AVSyncMode> avSyncMode{ AVSyncMode::VideoSyncToAudio };
     // 默认的流索引选择器：选择第一个流
@@ -288,7 +287,7 @@ private:
             options.rendererUserData,
             options.frameSwitchOptionsCallback,
             options.frameSwitchOptionsCallbackUserData,
-            options.enableHardwareDecoding
+            options.decodeType
         };
         AudioPlayOptions audioOptions{
             streamIndexSelector,
@@ -302,7 +301,7 @@ private:
     bool playMediaFile() {
         bool ar = true;
         bool vr = true;
-        execPlayerWithThreads({ [&] { waitComponentsStop(); }, [&] { vr = videoPlayer->play(); }, [&] { ar = audioPlayer->play(); }});
+        execPlayerWithThreads({ [&] { waitComponentsStop(); } , [&] { vr = videoPlayer->play(); }, [&] { ar = audioPlayer->play(); } });
         return ar && vr;
     }
     bool prepareToPlay() {
@@ -310,8 +309,9 @@ private:
         {
             try {
                 demuxer->openAndSelectStreams(filePath, demuxerStreamTypes, streamIndexSelector);
+                demuxer->start();
             }
-            catch (std::exception e) {
+            catch (std::exception e) { // openAndSelectStreams failed
                 return false;
             }
         }
@@ -344,17 +344,33 @@ public:
             this->stop();
     }
 
-    // 如果使用VideoPlayOptions，则enableHardwareDecoder会失效
+    // 若decodeType为VideoDecodeType::Unset，则不改变enableHardwareDecoding设置的值
     bool play(const std::string& filePath, const MediaPlayOptions& options) {
+        std::unique_lock lockSinglePlaybackMtx(singlePlaybackMtx);
+        if (isPlayingFlag.load())
+            return false; // 已经在播放中
+        isPlayingFlag.store(true);
+        lockSinglePlaybackMtx.unlock();
         this->setFilePath(filePath);
         if (!prepareToPlay())
             return false;
-        return playMediaFile(options);
+        bool rst = playMediaFile(options);
+        lockSinglePlaybackMtx.lock();
+        isPlayingFlag.store(false);
+        return rst;
     }
     virtual bool play() override {
+        std::unique_lock lockSinglePlaybackMtx(singlePlaybackMtx);
+        if (isPlayingFlag.load())
+            return false; // 已经在播放中
+        isPlayingFlag.store(true);
+        lockSinglePlaybackMtx.unlock();
         if (!prepareToPlay())
             return false;
-        return playMediaFile();
+        bool rst = playMediaFile();
+        lockSinglePlaybackMtx.lock();
+        isPlayingFlag.store(false);
+        return rst;
     }
     virtual void resume() override {
         execPlayerWithThreads({ [&] { videoPlayer->resume(); }, [&] { audioPlayer->resume(); } });
@@ -375,6 +391,21 @@ public:
         execPlayerWithThreads({ [&] { videoPlayer->stop(); }, [&] { audioPlayer->stop(); } });
         if (requestTaskQueueHandlerMode == ComponentWorkMode::External)
             requestTaskQueueHandler->stop();
+    }
+
+    virtual void setMute(bool state) override {
+        return audioPlayer->setMute(state);
+    }
+    // 视频播放器不支持音频播放，因此只需要考虑音频播放器的静音状态
+    virtual bool getMute() const override {
+        return audioPlayer->getMute();
+    }
+    virtual void setVolume(double volume) override {
+        return audioPlayer->setVolume(volume);
+    }
+    // 视频播放器不支持音频播放，因此只需要考虑音频播放器的音量
+    virtual double getVolume() const override {
+        return audioPlayer->getVolume();
     }
 
     // 跳转到指定pts位置，非精确跳转，使用AVSEEK_FLAG_BACKWARD标志从pts向前(回退)查找最近的关键帧
@@ -402,13 +433,13 @@ public:
     }
 
     virtual bool isPlaying() const override {
-        return audioPlayer->isPlaying() && videoPlayer->isPlaying();
+        return audioPlayer->isPlaying() && videoPlayer->isPlaying() && isPlayingFlag.load();
     }
     virtual bool isPaused() const override {
-        return audioPlayer->isPaused() && videoPlayer->isPaused();
+        return audioPlayer->isPaused() && videoPlayer->isPaused() && isPlayingFlag.load();
     }
     virtual bool isStopped() const override {
-        return audioPlayer->isStopped() && videoPlayer->isStopped();
+        return audioPlayer->isStopped() && videoPlayer->isStopped() && !isPlayingFlag.load();
     }
     virtual PlayerState getPlayerState() const override {
         PlayerState vs = videoPlayer->getPlayerState();

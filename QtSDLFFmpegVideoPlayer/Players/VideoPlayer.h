@@ -58,6 +58,12 @@ public:// 这个区域用于定义公共类型
     // 返回值true && (sleepTime != 0)表示需要睡眠/丢帧，false || (sleepTime == 0)表示不需要
     using VideoClockSyncFunction = std::function<bool(const AtomicDouble& videoClock, const AtomicBool& isClockStable, const double& videoRealtimeClock, int64_t& sleepTime)>;
 
+    enum class DecodeType {
+        Unset = 0,
+        Software = 1,
+        Hardware = 2,
+    };
+
     struct VideoPlayOptions {
         StreamIndexSelector streamIndexSelector{ nullptr };
         VideoClockSyncFunction clockSyncFunction{ nullptr };
@@ -65,7 +71,7 @@ public:// 这个区域用于定义公共类型
         UserDataType rendererUserData{ UserDataType{} };
         VideoFrameSwitchOptionsCallback frameSwitchOptionsCallback{ nullptr };
         UserDataType frameSwitchOptionsCallbackUserData{ UserDataType{} };
-        bool enableHardwareDecoding{ false };
+        DecodeType decodeType{ DecodeType::Software };
 
         void mergeFrom(const VideoPlayOptions& other) {
             if (other.streamIndexSelector) this->streamIndexSelector = other.streamIndexSelector;
@@ -74,7 +80,7 @@ public:// 这个区域用于定义公共类型
             if (other.rendererUserData.has_value()) this->rendererUserData = other.rendererUserData;
             if (other.frameSwitchOptionsCallback) this->frameSwitchOptionsCallback = other.frameSwitchOptionsCallback;
             if (other.frameSwitchOptionsCallbackUserData.has_value()) this->frameSwitchOptionsCallbackUserData = other.frameSwitchOptionsCallbackUserData;
-            this->enableHardwareDecoding = other.enableHardwareDecoding;
+            if (other.decodeType != DecodeType::Unset) this->decodeType = other.decodeType;
         }
     };
 
@@ -100,7 +106,7 @@ private:
         ThreadStateManager threadStateManager;
         // 解复用器
         StreamType demuxerStreamType{ STREAM_TYPES };
-        SharedPtr<DemuxerInterface> demuxer{ nullptr };
+        Atomic<DemuxerInterface*> demuxer{ nullptr };
         AVFormatContext* formatCtx{ nullptr };
         StreamIndexType streamIndex{ -1 };
         ConcurrentQueue<AVPacket*>* packetQueue{ nullptr };
@@ -118,7 +124,7 @@ private:
 
         // 清空队列
         void clearPktAndFrameQueues() {
-            demuxer->flushPacketQueue(demuxerStreamType);
+            demuxer.load()->flushPacketQueue(demuxerStreamType);
             AVFrame* frame = nullptr;
             while (tryDequeue(frameQueue, frame))
                 av_frame_free(&frame);
@@ -154,6 +160,7 @@ private:
     Logger logger{ loggerName, loggerSinks };
 
     // 播放器状态
+    Mutex mtxSinglePlayback;
     AtomicStateMachine<PlayerState> playerState{ PlayerState::Stopped };
     AtomicWaitObject<bool> waitStopped{ false }; // true表示已停止，false表示未停止
     VideoPlaybackStateVariables playbackStateVariables{ this };
@@ -173,28 +180,38 @@ public:
     ~VideoPlayer() {
         stop();
     }
-    // options会合并到已有的playOptions中，enableHardwareDecoding会被覆盖，其他选项如果非空则覆盖
+    // options会合并到已有的playOptions中，decodeType不为Unset时会被覆盖，其他选项如果非空则覆盖
     bool play(const std::string& filePath, VideoPlayOptions options) {
+        std::unique_lock lockMtxSinglePlayback(mtxSinglePlayback);
         if (!isStopped())
             return false;
         if (!trySetPlayerState(PlayerState::Preparing))
             return false;
         setFilePath(filePath);
         playbackStateVariables.playOptions.mergeFrom(options);
-        return playVideoFile();
+        if (!prepareBeforePlayback())
+            return false;
+        lockMtxSinglePlayback.unlock();
+        bool rst = playVideoFile();
+        lockMtxSinglePlayback.lock();
+        cleanupAfterPlayback();
+        return rst;
     }
     virtual bool play() override {
+        std::unique_lock lockMtxSinglePlayback(mtxSinglePlayback);
         if (!isStopped())
             return false;
-        PlayerState old = PlayerState::Stopped;
         if (!trySetPlayerState(PlayerState::Preparing))
             return false;
         if (playbackStateVariables.filePath.empty()) // 打开了文件才能播放
-        {
-            setPlayerState(old);
             return false;
-        }
-        return playVideoFile(); // 重新播放
+        if (!prepareBeforePlayback())
+            return false;
+        lockMtxSinglePlayback.unlock();
+        bool rst = playVideoFile();
+        lockMtxSinglePlayback.lock();
+        cleanupAfterPlayback();
+        return rst;
     }
 
     virtual void resume() override { // 用于从暂停/停止状态恢复播放
@@ -215,13 +232,15 @@ public:
         }
     }
     virtual void notifyStop() override {
+        std::unique_lock lockSinglePlaybackMtx(mtxSinglePlayback);
         if (playerState != PlayerState::Stopping && !isStopped())
         {
             setPlayerState(PlayerState::Stopping);
+            lockSinglePlaybackMtx.unlock(); // 释放锁，以便停止过程中调用的其他函数能获取锁
             // 唤醒解复用器
             if (demuxerMode == ComponentWorkMode::Internal)
             {
-                playbackStateVariables.demuxer->stop();
+                playbackStateVariables.demuxer.load()->stop();
                 //playbackStateVariables.demuxer->stop(); // 这里不调用stop，因为start的时候传递了stopCondition用于决定何时退出，所以这里只需要唤醒即可
                 //playbackStateVariables.demuxer->wakeUp();
             }
@@ -239,6 +258,21 @@ public:
             waitStopped.wait(true); // 等待停止完成
             //resetPlayer(); // 播放结束会自动重置播放器
         }
+    }
+
+    virtual void setMute(bool state) override {
+
+    }
+    // 视频播放器不支持音频播放，因此始终返回true表示静音状态
+    virtual bool getMute() const override {
+        return true;
+    }
+    virtual void setVolume(double volume) override {
+
+    }
+    // 视频播放器不支持音频播放，因此始终返回0.0表示无音量
+    virtual double getVolume() const override {
+        return 0.0;
     }
 
     // \param streamIndex -1表示使用AV_TIME_BASE计算，否则使用streamIndex指定的流的time_base
@@ -327,7 +361,10 @@ public:
     }
 
     void enableHardwareDecoding(bool b) {
-        this->playbackStateVariables.playOptions.enableHardwareDecoding = b;
+        if (b)
+            this->playbackStateVariables.playOptions.decodeType = DecodeType::Hardware;
+        else
+            this->playbackStateVariables.playOptions.decodeType = DecodeType::Software;
     }
 
     void setFrameSwitchOptionsCallback(VideoFrameSwitchOptionsCallback callback, UserDataType userData) {
@@ -353,7 +390,8 @@ protected:
         // 清空队列
         playbackStateVariables.clearPktAndFrameQueues();
         // 刷新解码器buffer
-        avcodec_flush_buffers(playbackStateVariables.codecCtx.get());
+        if (playbackStateVariables.codecCtx)
+            avcodec_flush_buffers(playbackStateVariables.codecCtx.get());
     }
 
     int64_t clockSync(size_t pts, StreamIndexType streamIndex, bool isStable) {
@@ -397,6 +435,9 @@ private:
         setPlayerState(PlayerState::Stopped);
     }
 
+    bool getIsHardwareDecodingEnabled() const {
+        return playbackStateVariables.playOptions.decodeType == DecodeType::Hardware;
+    }
 
     bool shouldCommitRequest() {
         return !isStopped() && playerState != PlayerState::Stopping
@@ -413,17 +454,18 @@ private:
                 //std::vector<ThreadStateManager::ThreadStateController> waitObjs;
                 auto& ctx = std::any_cast<ThreadBlockerAwakenerContext&>(userData);
                 ctx.waitObjs.clear();
-                threadBlocker(logger, taskItem.blockTargetThreadIds, playbackStateVariables.threadStateManager, playbackStateVariables.demuxer.get(), ctx.waitObjs, ctx.demuxerPaused);
+                threadBlocker(logger, taskItem.blockTargetThreadIds, playbackStateVariables.threadStateManager, playbackStateVariables.demuxer.load(), ctx.waitObjs, ctx.demuxerPaused);
             },
             [&](const RequestTaskItem& taskItem, std::any& userData) {
                 auto& ctx = std::any_cast<ThreadBlockerAwakenerContext&>(userData);
-                threadAwakener(ctx.waitObjs, playbackStateVariables.demuxer.get(), ctx.demuxerPaused);
+                threadAwakener(ctx.waitObjs, playbackStateVariables.demuxer.load(), ctx.demuxerPaused);
             },
             threadBlockerAwakenerContext);
     }
 
-
+    bool prepareBeforePlayback();
     bool playVideoFile();
+    void cleanupAfterPlayback();
 
     //// 打开文件
     //bool openInput() {
@@ -445,9 +487,10 @@ private:
     //void readPackets();
     
     // （如果包队列少于或等于某个最小值）通知解码器有新包到达
-    void packetEnqueueCallback() {
+    void packetEnqueueCallback() { // 该函数内不能轻易使用playbackStateVariables中的packetQueue,formatCtx,streamIndex
+        if (!playbackStateVariables.demuxer.load()) return;
         // 解复用器每次成功入队一个包后调用该回调函数，通知解码器继续解码
-        if (getQueueSize(*playbackStateVariables.packetQueue) <= playbackStateVariables.demuxer->getMinPacketQueueSize(playbackStateVariables.demuxerStreamType))
+        if (getQueueSize(*playbackStateVariables.demuxer.load()->getPacketQueue(playbackStateVariables.demuxerStreamType)) <= playbackStateVariables.demuxer.load()->getMinPacketQueueSize(playbackStateVariables.demuxerStreamType))
             playbackStateVariables.threadStateManager.wakeUpById(ThreadIdentifier::Decoder);
     }
 

@@ -67,8 +67,8 @@ QVariant PlayListItemListModel::data(const QModelIndex& index, int role) const
         return tr("播放列表项目: ") + item.title;
     case Qt::CheckStateRole: // 复选框状态（如果有）
         return QVariant();
-    //case Qt::ForegroundRole:
-    //    return QVariant(QBrush(QColor(238, 180, 180)));
+    case Qt::ForegroundRole: // 前景色（文本颜色）
+        return QVariant(item.fontColor);
     //case Qt::BackgroundRole:
     //    return QVariant(QBrush(QColor(220, 220, 220)));
     //case Qt::BackgroundRole:
@@ -81,7 +81,18 @@ QVariant PlayListItemListModel::data(const QModelIndex& index, int role) const
 
 bool PlayListItemListModel::setData(const QModelIndex& index, const QVariant& value, int role)
 {
-    return setData(index, value.value<PlayListItem>(), role);
+    if (role == Qt::EditRole || role == Qt::DisplayRole)
+        return setData(index, value.value<PlayListItem>(), role);
+    else if (role == Qt::ForegroundRole)
+    {
+        if (value.canConvert<QColor>())
+        {
+            m_items[index.row()].fontColor = value.value<QColor>();
+            emit dataChanged(index, index, { Qt::ForegroundRole });
+            return true;
+        }
+    }
+    return false;
 }
 
 // 条件：(role == Qt::EditRole || role == Qt::DisplayRole)
@@ -104,6 +115,9 @@ bool PlayListItemListModel::insertRows(int row, int count, const QModelIndex& pa
         return false;
     beginInsertRows(QModelIndex(), row, row + count - 1);
     m_items.insert(row, count, PlayListItem());
+    // 插入后调整正在播放的列表项索引
+    if (row <= m_currentPlayingIndex)
+        m_currentPlayingIndex += count;
     endInsertRows();
     return true;
 }
@@ -113,10 +127,15 @@ bool PlayListItemListModel::removeRows(int row, int count, const QModelIndex& pa
     if (count <= 0 || row < 0 || (row + count) > rowCount(parent))
         return false;
     beginRemoveRows(QModelIndex(), row, row + count - 1);
-
+    
+    if (row <= m_currentPlayingIndex && static_cast<qsizetype>(row) + count > m_currentPlayingIndex)
+        m_currentPlayingIndex = -1; // Removed the currently playing item
     const auto it = m_items.begin() + row;
     m_items.erase(it, it + count);
-
+    if (static_cast<qsizetype>(row) + count <= m_currentPlayingIndex)
+        m_currentPlayingIndex -= count;
+    else if (static_cast<qsizetype>(row) <= m_currentPlayingIndex)
+        m_currentPlayingIndex = -1; // Removed the currently playing item
     endRemoveRows();
     return true;
 }
@@ -141,17 +160,21 @@ bool PlayListItemListModel::moveRows(const QModelIndex& sourceParent, int source
         return false;
 
     // move [sourceRow, count) into destinationChild:
-    if (sourceRow < destinationChild) {
+    if (sourceRow < destinationChild) { // moving down
         auto beg = m_items.begin() + sourceRow;
         auto end = beg + count;
         auto to = m_items.begin() + destinationChild;
         std::rotate(beg, end, to);
+        if (sourceRow <= m_currentPlayingIndex && static_cast<qsizetype>(sourceRow) + count > m_currentPlayingIndex)
+            m_currentPlayingIndex = (m_currentPlayingIndex - sourceRow)/*相对拖拽区域行号*/ + destinationChild - count; // Removed the currently playing item
     }
-    else {
+    else { // moving up
         auto to = m_items.begin() + destinationChild;
         auto beg = m_items.begin() + sourceRow;
         auto end = beg + count;
         std::rotate(to, beg, end);
+        if (sourceRow <= m_currentPlayingIndex && static_cast<qsizetype>(sourceRow) + count > m_currentPlayingIndex)
+            m_currentPlayingIndex = (m_currentPlayingIndex - sourceRow)/*相对拖拽区域行号*/ + destinationChild; // Removed the currently playing item
     }
     endMoveRows();
     return true;
@@ -244,6 +267,7 @@ bool PlayListItemListModel::dropMimeData(const QMimeData* data, Qt::DropAction a
     default:
         break;
     }
+    return false; // 默认不处理
 }
 
 QStringList PlayListItemListModel::mimeTypes() const
@@ -268,6 +292,7 @@ bool PlayListItemListModel::decodeData(int row, int column, const QModelIndex& p
     QList<int> rows, columns;
     QList<QMap<int, QVariant>> data;
 
+    // 反序列化数据，保存其对应的行列号，并计算整个选区上下左右四个边界
     while (!stream.atEnd()) {
         int r, c;
         QMap<int, QVariant> v;
@@ -287,16 +312,16 @@ bool PlayListItemListModel::decodeData(int row, int column, const QModelIndex& p
     int dragColumnCount = right - left + 1;
 
     // Compute the number of continuous rows upon insertion and modify the rows to match
-    QList<int> rowsToInsert(bottom + 1);
-    for (int i = 0; i < rows.size(); ++i)
-        rowsToInsert[rows.at(i)] = 1;
-    for (int i = 0; i < rowsToInsert.size(); ++i) {
-        if (rowsToInsert.at(i) == 1) {
-            rowsToInsert[i] = dragRowCount;
-            ++dragRowCount;
+    QList<int> rowsToInsert(bottom + 1); // 要插入的行数列表，初始化为0
+    for (int i = 0; i < rows.size(); ++i) // 类似于原地哈希
+        rowsToInsert[rows.at(i)] = 1; // rowsToInsert[来源行号] = 1，表示该行被拖动了，类似于bool变量数组判断是否满足某个条件
+    for (int i = 0; i < rowsToInsert.size(); ++i) { // 遍历rowsToInsert
+        if (rowsToInsert.at(i) == 1) { // 为1表示该行被拖动了
+            rowsToInsert[i] = dragRowCount; // rowsToInsert[来源行号] = 要插入的行号偏移量(即有序列表当前项排在几号)
+            ++dragRowCount; // 计算拖动的总行数
         }
     }
-    for (int i = 0; i < rows.size(); ++i)
+    for (int i = 0; i < rows.size(); ++i) // 修改rows列表，使其表示每个拖拽的列表项插入后的行号
         rows[i] = top + rowsToInsert.at(rows.at(i));
 
     QBitArray isWrittenTo(dragRowCount * dragColumnCount);
@@ -307,19 +332,20 @@ bool PlayListItemListModel::decodeData(int row, int column, const QModelIndex& p
     //    insertColumns(colCount, dragColumnCount - colCount, parent);
     //    colCount = columnCount(parent);
     //}
-    insertRows(row, dragRowCount, parent);
+    insertRows(row, dragRowCount, parent); // 在指定位置插入足够的行数
 
+    // 确保row和column不为负数
     row = qMax(0, row);
     column = qMax(0, column);
 
-    QList<QPersistentModelIndex> newIndexes(data.size());
+    QList<QPersistentModelIndex> newIndexes(data.size()); // 保存新插入项的索引
     // set the data in the table
-    for (int j = 0; j < data.size(); ++j) {
-        int relativeRow = rows.at(j) - top;
-        int relativeColumn = columns.at(j) - left;
-        int destinationRow = relativeRow + row;
-        //int destinationColumn = relativeColumn + column;
-        int flat = (relativeRow * dragColumnCount) + relativeColumn;
+    for (int j = 0; j < data.size(); ++j) { // 遍历每个拖拽的列表项
+        int relativeRow = rows.at(j) - top; // 相对于拖拽区域顶部的行号
+        int relativeColumn = columns.at(j) - left; // 相对于拖拽区域左侧的列号
+        int destinationRow = relativeRow + row; // 计算插入后的行号
+        //int destinationColumn = relativeColumn + column; // 计算插入后的列号
+        int flat = (relativeRow * dragColumnCount) + relativeColumn; // 计算一维索引
         // if the item was already written to, or we just can't fit it in the table, create a new row
         if (/*destinationColumn >= colCount || */isWrittenTo.testBit(flat)) {
             //destinationColumn = qBound(column, destinationColumn, colCount - 1);
@@ -336,7 +362,17 @@ bool PlayListItemListModel::decodeData(int row, int column, const QModelIndex& p
 
     for (int k = 0; k < newIndexes.size(); k++) {
         if (newIndexes.at(k).isValid())
+        {
             setItemData(newIndexes.at(k), data.at(k));
+            // 检测是否需要更新正在播放的列表项索引
+            QVariant var = data.at(k).value(Qt::DisplayRole);
+            if (var.canConvert<PlayListItem>())
+            {
+                PlayListItem item = var.value<PlayListItem>();
+                qsizetype newIndex = newIndexes.at(k).row();
+                if (item.playing) m_currentPlayingIndex = newIndex;
+            }
+        }
     }
 
     return true;
@@ -463,13 +499,19 @@ void PlayListListViewItemDelegate::paint(QPainter* painter, const QStyleOptionVi
     QRect iconRect{ itemRect.left() + paddingSize, itemRect.top() + (itemRect.height() - iconSize.height()) / 2, iconSize.width(), iconSize.height() };
     item.icon.paint(painter, iconRect);
     // draw text
+    // 设置画笔颜色
+    QVariant&& foregroundVar = index.data(Qt::ForegroundRole);
+    if (foregroundVar.canConvert<QColor>())
+    {
+        QColor foregroundColor = foregroundVar.value<QColor>();
+        painter->setPen(foregroundColor);
+    }
     QRect titleDrawRect = itemRect.adjusted(iconSize.width() + fontMetrics.averageCharWidth() + paddingSize, paddingSize, -paddingSize, -paddingSize);
     QString titleDrawText = fontMetrics.elidedText(item.title, Qt::ElideRight, titleDrawRect.width());
     QTextOption titleTextOption(Qt::AlignVCenter | Qt::AlignLeft);
     titleTextOption.setWrapMode(QTextOption::NoWrap);
     painter->drawText(titleDrawRect, titleDrawText, titleTextOption);
     painter->restore();
-
     //QVariant checkState = index.data(Qt::CheckStateRole);
 }
 

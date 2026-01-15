@@ -4,6 +4,8 @@ inline PlayerTypes::AVCodecContextConstDeleter PlayerTypes::constDeleterAVCodecC
 inline PlayerTypes::AVPacketConstDeleter PlayerTypes::constDeleterAVPacket = [](AVPacket* pkt) { if (pkt) av_packet_free(&pkt); };
 inline PlayerTypes::AVFrameConstDeleter PlayerTypes::constDeleterAVFrame = [](AVFrame* frame) { if (frame) av_frame_free(&frame); };
 inline PlayerTypes::AVFormatContextConstDeleter PlayerTypes::constDeleterAVFormatContext = [](AVFormatContext* ctx) { if (ctx) avformat_close_input(&ctx); };
+inline PlayerTypes::AVFilterContextConstDeleter PlayerTypes::constDeleterAVFilterContext = [](AVFilterContext* ctx) { if (ctx) avfilter_free(ctx); };
+inline PlayerTypes::AVFilterGraphConstDeleter PlayerTypes::constDeleterAVFilterGraph = [](AVFilterGraph* graph) { if (graph) avfilter_graph_free(&graph); };
 
 #define EnumValueToStringCase(prefix, enumValue) \
     case prefix::enumValue: return #enumValue
@@ -887,4 +889,10 @@ void PlayerTypes::threadAwakener(std::vector<ThreadStateManager::ThreadStateCont
     }
     if (demuxerPaused && demuxer)
         demuxer->resume();
+}
+
+
+void PlayerTypes::FrameVolumeFilter::filter(AVFrame* frame)
+{
+    // TODO: implement frame volume filter
 }

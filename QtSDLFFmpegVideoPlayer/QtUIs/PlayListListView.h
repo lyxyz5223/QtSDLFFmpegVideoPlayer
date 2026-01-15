@@ -21,8 +21,12 @@ struct PlayListItem
     }
 private:
     QIcon icon;
+    bool playing = false;
+    QColor fontColor{ Qt::black };
     friend class PlayListItemListModel;
     friend class PlayListListViewItemDelegate;
+    friend QDataStream& operator<<(QDataStream& out, const PlayListItem& item);
+    friend QDataStream& operator>>(QDataStream& in, PlayListItem& item);
 };
 
 // 元类型声明，注册PlayListItem到Qt元对象系统，并注册类型id
@@ -32,12 +36,20 @@ inline QDataStream& operator<<(QDataStream& out, const PlayListItem& item) // �
 {
     out << item.url;
     out << item.title;
+    // 私有成员如下
+    // icon成员不进行序列化
+    out << item.playing;
+    out << item.fontColor;
     return out;
 }
 inline QDataStream& operator>>(QDataStream& in, PlayListItem& item) // 反序列化
 {
     in >> item.url;
     in >> item.title;
+    // 私有成员如下
+    // icon成员不进行序列化
+    in >> item.playing;
+    in >> item.fontColor;
     return in;
 }
 
@@ -104,8 +116,45 @@ public:
         m_items = items;
         endResetModel();
     }
+
+    void clearCurrentPlayingIndex() {
+        setCurrentPlayingIndex(-1); // 将播放状态清除
+    }
+
+    void setCurrentPlayingIndex(qsizetype index) {
+        if (m_currentPlayingIndex >= 0 && m_currentPlayingIndex < m_items.size())
+        {
+            m_items[m_currentPlayingIndex].playing = false; // 将旧的播放状态清除
+            setData(this->index(m_currentPlayingIndex), QVariant(normalFontColor), Qt::ForegroundRole);
+        }
+        m_currentPlayingIndex = index;
+        // 手动调用setData更新视图，主要是为了触发视图的重绘
+        setData(this->index(index), QVariant(playingFontColor), Qt::ForegroundRole);
+        if (index >= 0 && index < m_items.size())
+            m_items[index].playing = true;
+    }
+
+    qsizetype currentPlayingIndex() const {
+        return m_currentPlayingIndex;
+    }
+
+    // 查找当前播放的索引，如有多个只返回第一个，找不到返回-1，且正常情况下只应存在1/0个播放中的项
+    qsizetype findPlayingIndex() const {
+        for (qsizetype i = 0; i < m_items.size(); ++i) {
+            if (m_items[i].playing)
+                return i;
+        }
+        return -1;
+    }
+
 private:
     QList<PlayListItem> m_items;
+    qsizetype m_currentPlayingIndex = -1;
+    QColor playingFontColor = QColor(238, 180, 180);
+    QColor normalFontColor = QColor(0, 0, 0);
+    //QColor currentFontColor{ normalFontColor };
+
+
     static QStringList m_mimeTypes;
     static QMap<QString, qsizetype> m_mimeTypeIndexMap;
     void encodeData(const QModelIndexList& indexes, QDataStream& stream) const;
@@ -157,5 +206,7 @@ private:
     int paddingInsideSize = 0;
     // 绘制的item圆角半径
     qreal itemRadius = 7;
+    // 
+    int iconModeColumnWidth = 300;
 };
 

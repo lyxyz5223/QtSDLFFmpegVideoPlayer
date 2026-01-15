@@ -1,6 +1,6 @@
 #include "VideoPlayer.h"
 
-bool VideoPlayer::playVideoFile()
+bool VideoPlayer::prepareBeforePlayback()
 {
     waitStopped.set(false);
     auto demuxerMode = this->demuxerMode;
@@ -10,17 +10,17 @@ bool VideoPlayer::playVideoFile()
         auto& psv = playbackStateVariables;
         if (demuxerMode == ComponentWorkMode::Internal)
         {
-            psv.demuxer = internalDemuxer;
-            psv.demuxer->setPacketEnqueueCallback(playbackStateVariables.demuxerStreamType, std::bind(&VideoPlayer::packetEnqueueCallback, this));
-            psv.demuxer->openAndSelectStreams(psv.filePath, psv.demuxerStreamType, psv.playOptions.streamIndexSelector);
+            psv.demuxer.store(internalDemuxer.get());
+            psv.demuxer.load()->setPacketEnqueueCallback(playbackStateVariables.demuxerStreamType, std::bind(&VideoPlayer::packetEnqueueCallback, this));
+            psv.demuxer.load()->openAndSelectStreams(psv.filePath, psv.demuxerStreamType, psv.playOptions.streamIndexSelector);
         }
         else/* if (demuxerMode == DemuxerMode::External)*/
-            psv.demuxer = externalDemuxer;
+            psv.demuxer.store(externalDemuxer.get());
         if (!psv.demuxer) // 解复用器不存在，通常为外部解复用器指针为空
             throw std::runtime_error("Demuxer is nullptr.");
-        psv.formatCtx = psv.demuxer->getFormatContext();
-        psv.streamIndex = psv.demuxer->getStreamIndex(psv.demuxerStreamType);
-        psv.packetQueue = psv.demuxer->getPacketQueue(psv.demuxerStreamType);
+        psv.formatCtx = psv.demuxer.load()->getFormatContext();
+        psv.streamIndex = psv.demuxer.load()->getStreamIndex(psv.demuxerStreamType);
+        psv.packetQueue = psv.demuxer.load()->getPacketQueue(psv.demuxerStreamType);
 
         if (requestTaskQueueHandlerMode == ComponentWorkMode::Internal)
         {
@@ -68,15 +68,18 @@ bool VideoPlayer::playVideoFile()
         resetPlayer();
         return false;
     }
-
     setPlayerState(PlayerState::Playing);
+}
+
+bool VideoPlayer::playVideoFile()
+{
     // 启动处理线程
     if (requestTaskQueueHandlerMode == ComponentWorkMode::Internal)
         playbackStateVariables.requestQueueHandler->start();
     // 启动读包
     //std::thread threadReadPackets(&VideoPlayer::readPackets, this);
     if (demuxerMode == ComponentWorkMode::Internal)
-        playbackStateVariables.demuxer->start(); // 启动解复用器读取线程
+        playbackStateVariables.demuxer.load()->start(); // 启动解复用器读取线程
     // 启动包转视频流
     std::thread threadPacket2VideoFrames(&VideoPlayer::packet2VideoFrames, this);
     // 启动渲染视频
@@ -91,13 +94,18 @@ bool VideoPlayer::playVideoFile()
     if (threadRenderVideo.joinable())
         threadRenderVideo.join();
     if (demuxerMode == ComponentWorkMode::Internal)
-        playbackStateVariables.demuxer->waitStop(); // 等待解复用器停止
+        playbackStateVariables.demuxer.load()->waitStop(); // 等待解复用器停止
+    return true;
+}
+
+void VideoPlayer::cleanupAfterPlayback()
+{
     // 恢复播放器状态
     resetPlayer();
     // 通知停止
     waitStopped.setAndNotifyAll(true);
-    return true;
 }
+
 
 //bool VideoPlayer::findAndSelectVideoStream()
 //{
@@ -123,7 +131,7 @@ bool VideoPlayer::playVideoFile()
 
 bool VideoPlayer::findAndOpenVideoDecoder()
 {
-    bool useHardwareDecoding = playbackStateVariables.playOptions.enableHardwareDecoding;
+    bool useHardwareDecoding = getIsHardwareDecodingEnabled();
     auto rst = MediaDecodeUtils::findAndOpenVideoDecoder(&logger, playbackStateVariables.formatCtx, playbackStateVariables.streamIndex, playbackStateVariables.codecCtx, useHardwareDecoding, &playbackStateVariables.hwDeviceType, &playbackStateVariables.hwPixelFormat);
     if (!useHardwareDecoding)
     {
@@ -200,7 +208,7 @@ void VideoPlayer::packet2VideoFrames()
             continue;
         }
         if (getQueueSize(*playbackStateVariables.packetQueue) < MIN_VIDEO_PACKET_QUEUE_SIZE)
-            playbackStateVariables.demuxer->wakeUp(); // 包队列数据过少，唤醒解复用器读取更多数据
+            playbackStateVariables.demuxer.load()->wakeUp(); // 包队列数据过少，唤醒解复用器读取更多数据
         // 取出视频包
         AVPacket* videoPkt = nullptr;
         if (!tryDequeue(*playbackStateVariables.packetQueue, videoPkt))
@@ -667,7 +675,7 @@ void VideoPlayer::requestTaskHandlerSeek(MediaRequestHandleEvent* e, std::any us
         playbackStateVariables.videoClock.store(pts / (double)AV_TIME_BASE);
     // 读取下一帧
     AVPacket* pkt = nullptr;
-    playbackStateVariables.demuxer->readOnePacket(&pkt);
+    playbackStateVariables.demuxer.load()->readOnePacket(&pkt);
     // 重置时钟
     if (pkt)
         clockSync(pkt->pts, pkt->stream_index, false);

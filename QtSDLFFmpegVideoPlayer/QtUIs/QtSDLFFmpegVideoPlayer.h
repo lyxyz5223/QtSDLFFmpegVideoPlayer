@@ -117,6 +117,9 @@ public slots:
     void mediaSliderReleased();
     void mediaSliderValueChanged(int);
 
+    void mediaVolumeMuteUnmute();
+    void mediaVolumeSliderMoved();
+
 private:
     Ui::QtSDLFFmpegVideoPlayerClass ui;
     int argc = 0;
@@ -164,12 +167,13 @@ private:
     // 播放停止后（无论什么原因）调用
     void afterPlaybackCallback();
 
+    // 播放指定文件
+    // 此函数为异步函数，调用后立即返回，播放在另一个线程中进行，且会自动停止之前的播放
     void playerPlay(QString filePath);
 
-    constexpr static auto SDLPollEventFunction = []() -> int {
-        SDL_Event e;
-        return SDL_PollEvent(&e);
-        };
-
+    // 播放播放列表中指定索引的文件
+    // 此函数会自动设置播放列表中的当前播放索引
+    // 不会检查索引有效性，调用前请确保索引有效
+    void playerPlayByPlayListIndex(qsizetype index);
 
 };
