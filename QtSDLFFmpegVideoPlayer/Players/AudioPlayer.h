@@ -21,8 +21,9 @@ public:
     static constexpr size_t MIN_AUDIO_PACKET_QUEUE_SIZE = 100; // 最小音频帧队列数量
     // 统一音频转换后用于播放的格式
     static constexpr AVSampleFormat AUDIO_OUTPUT_FORMAT = AVSampleFormat::AV_SAMPLE_FMT_S16;
+    using AudioSampleFormatType = int16_t;
     // 用于播放的格式每单位样本大小
-    static constexpr int AUDIO_OUTPUT_FORMAT_BYTES_PER_SAMPLE = sizeof(uint16_t); // AV_SAMPLE_FMT_S16 每个样本2字节
+    static constexpr int AUDIO_OUTPUT_FORMAT_BYTES_PER_SAMPLE = sizeof(AudioSampleFormatType); // AV_SAMPLE_FMT_S16 每个样本2字节
 
     static constexpr StreamTypes STREAM_TYPES = StreamType::STAudio;
 
@@ -53,6 +54,8 @@ public:
         AVRational timeBase{ 1, AV_TIME_BASE }; // 时间基，也可以从formatCtx->streams[streamIndex]->time_base获取
         double frameTime{ 0.0 }; // 帧对应的时间，单位s
         double streamTime{ 0.0 }; // 流时间，单位s
+        double volume{ 1.0 }; // 音量，范围0.0 ~ 1.0
+        bool isMute{ false }; // 静音
     };
 
     class AudioRenderEvent : public MediaEvent {
@@ -105,6 +108,11 @@ private:
         ConcurrentQueue<AVPacket*>* packetQueue{ nullptr };
 
         UniquePtr<AVCodecContext> codecCtx{ nullptr, constDeleterAVCodecContext };
+        // 音频帧滤镜
+        UniquePtrD<FrameFilter> frameFilter{ nullptr };
+        // 音量与静音
+        AtomicDouble volume{ 1.0 }; // 范围0.0 ~ 1.0
+        AtomicBool isMute{ false };
 
         // 时钟
         AtomicDouble audioClock{ 0.0 }; // 单位s
@@ -118,6 +126,7 @@ private:
 
         void clearPktAndStreamQueues() {
             demuxer.load()->flushPacketQueue(demuxerStreamType);
+            std::unique_lock lockMtxStreamQueue(mtxStreamQueue); // 记得加锁
             Queue<AudioStreamInfo> streamQueueNew;
             streamQueue.swap(streamQueueNew);
         }
@@ -131,6 +140,7 @@ private:
             streamIndex = -1;
             formatCtx = nullptr;
             codecCtx.reset();
+            frameFilter.reset();
             audioClock.store(0.0);
             realtimeClock = 0.0;
             // 清空请求任务队列
@@ -247,17 +257,19 @@ public:
         }
     }
 
+    void mute() { setMute(true); }
+    void unmute() { setMute(false); }
     virtual void setMute(bool state) override {
-        
+        playbackStateVariables.isMute.store(state);
     }
     virtual bool getMute() const override {
-        return false;
+        return playbackStateVariables.isMute;
     }
     virtual void setVolume(double volume) override {
-
+        playbackStateVariables.volume.store(volume);
     }
     virtual double getVolume() const override {
-        return 1.0;
+        return playbackStateVariables.volume.load();
     }
 
     // \param streamIndex -1表示使用AV_TIME_BASE计算，否则使用streamIndex指定的流的time_base

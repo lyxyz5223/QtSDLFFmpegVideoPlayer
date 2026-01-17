@@ -5,8 +5,8 @@
 #include <QAbstractScrollArea>
 #include <QScrollBar>
 #include <QMimeData>
-#include <QFileIconProvider>
 #include <QBitArray>
+#include <QMouseEvent>
 
 #define APP_PLAYLIST_MIMETYPE_INDEX 0
 #define FILE_URI_LIST_MIMETYPE_INDEX 1
@@ -570,7 +570,18 @@ QSize PlayListListViewItemDelegate::getScrollBarSize(const QWidget* widget, Qt::
 //    return setData(index, roleIter.value(), roleIter.key());
 //}
 
+PlayListListView::PlayListListView(QWidget* parent)
+    : QListView(parent)
+{
+    PlayListListViewItemDelegate* delegate = new PlayListListViewItemDelegate(this);
+    this->setItemDelegate(delegate);
+    this->setAutoFillBackground(true);
+}
 
-
-
-
+void PlayListListView::mouseDoubleClickEvent(QMouseEvent* event)
+{
+    QModelIndex index = this->indexAt(event->pos());
+    if (!index.isValid())
+        emit backgroundDoubleClicked();
+    QListView::mouseDoubleClickEvent(event);
+}

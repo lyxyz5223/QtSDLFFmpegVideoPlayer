@@ -69,6 +69,7 @@ bool VideoPlayer::prepareBeforePlayback()
         return false;
     }
     setPlayerState(PlayerState::Playing);
+    return true;
 }
 
 bool VideoPlayer::playVideoFile()
@@ -501,19 +502,19 @@ void VideoPlayer::renderVideo()
                 if (sleepTime > 0)
                 {
                     // 需要等待
-                    logger.info("Video sleep: {} ms", sleepTime);
+                    logger.trace("Video sleep: {} ms", sleepTime);
                     ThreadSleepMs(sleepTime); // 后续可以替换为可打断的睡眠，防止睡眠时间过长导致收不到阻塞/退出信号
                 }
                 else if (sleepTime < -1000) // 超过1s就跳帧
                 {
                     // 落后太多，跳过帧
-                    logger.info("Video drop frame to catch up: {} ms", -sleepTime);
+                    logger.trace("Video drop frame to catch up: {} ms", -sleepTime);
                     continue;
                 }
                 else if (sleepTime < 0)
                 {
                     // 稍微落后，加速（不睡眠）播放，无伤大雅
-                    logger.info("Video slightly faster: {} ms", -sleepTime);
+                    logger.trace("Video slightly faster: {} ms", -sleepTime);
                 }
             }
         }

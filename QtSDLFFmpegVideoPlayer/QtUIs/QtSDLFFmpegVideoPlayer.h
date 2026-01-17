@@ -97,12 +97,16 @@ public:
 protected:
     virtual bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;
     virtual void closeEvent(QCloseEvent* e) override;
+    virtual void resizeEvent(QResizeEvent* e) override;
 
 
 public slots:
     void sdlEventLoop();
 
-    void selectFileAndPlay();
+    void selectFilesAndPlay();
+    void selectFolderAndPlay();
+    void selectUrlAndPlay();
+    void openSettingsDialog();
 
     void mediaPlayPause();
     void mediaStop();
@@ -118,7 +122,8 @@ public slots:
     void mediaSliderValueChanged(int);
 
     void mediaVolumeMuteUnmute();
-    void mediaVolumeSliderMoved();
+    void mediaVolumeSliderMoved(int);
+    void mediaVolumeSliderValueChanged(int);
 
 private:
     Ui::QtSDLFFmpegVideoPlayerClass ui;
@@ -147,18 +152,61 @@ private:
         else
             ui.btnPlayPause->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::MediaPlaybackStart));
     }
-    double calcMsFromTimeStamp(uint64_t pts, AVRational timeBase) const {
+    // 设置音量按钮为静音或非静音状态
+    void setVolumeButtonState(bool isMuted, double vol = -1) {
+        if (isMuted)
+            ui.btnVolume->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::AudioVolumeMuted));
+        else
+        {
+            if (vol < 0) vol = getVolumeFromUI();
+            //constexpr double fragment = 1 / 3.0;
+            //int rst = vol / fragment;
+            int rst = vol * 3; // 化简vol / (1 / 3.0) = vol * 3
+            switch (rst)
+            {
+            default: // < 1.00000
+            case 2: // < 0.99999
+                ui.btnVolume->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::AudioVolumeHigh));
+                break;
+            case 1: // < 0.66666
+                ui.btnVolume->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::AudioVolumeMedium));
+                break;
+            case 0: // < 0.33333
+                if (vol != 0)
+                    ui.btnVolume->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::AudioVolumeLow));
+                else // <= 0.00000
+                    ui.btnVolume->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::AudioVolumeMuted));
+                break;
+            }
+        }
+    }
+
+    double getVolumeFromUIValue(int value) const {
+        auto min = ui.sliderVolume->minimum();
+        auto max = ui.sliderVolume->maximum();
+        return (value - min) / (double)(max - min);
+    }
+    double getVolumeFromUI() const {
+        return getVolumeFromUIValue(ui.sliderVolume->value());
+    }
+
+    static double calcMsFromTimeStamp(uint64_t pts, AVRational timeBase) {
         return pts * timeBase.num / (static_cast<double>(timeBase.den) / 1000);
     }
     // 根据总时间计算总时长/ms
-    uint64_t calcMsFromAVDuration(uint64_t duration) const {
+    static uint64_t calcMsFromAVDuration(uint64_t duration) {
         return duration / (AV_TIME_BASE / 1000);
     }
     // 根据滑块值（当前播放时间/ms）计算要seek到的时间，单位微秒
     template <typename T>
-    uint64_t calcSeekTimeFromMs(T value) const {
+    static uint64_t calcSeekTimeFromMs(T value) {
         return static_cast<size_t>(value) * (AV_TIME_BASE / 1000);
     }
+    // 根据毫秒计算时间字符串
+    static QString msToQString(uint64_t milliseconds);
+
+    static QString getElidedString(QString str, int width, QFont font);
+
     // 渲染第一帧的时候调用
     void beforePlaybackCallback(const AVFormatContext* formatCtx, const AVCodecContext* videoCodecCtx);
     // 每一帧渲染时调用
@@ -176,4 +224,5 @@ private:
     // 不会检查索引有效性，调用前请确保索引有效
     void playerPlayByPlayListIndex(qsizetype index);
 
+    void playerSetVolume(double volume);
 };

@@ -1,6 +1,8 @@
 #include "PlayListWidget.h"
 #include <QFileDialog>
 #include <QResizeEvent>
+#include <QDir>
+#include <QRegularExpression>
 
 PlayListWidget::PlayListWidget(QWidget* parent)
     : QWidget(parent)
@@ -8,10 +10,11 @@ PlayListWidget::PlayListWidget(QWidget* parent)
     ui.setupUi(this);
     m_playListModel = new PlayListItemListModel(this);
     ui.listItems->setModel(m_playListModel);
-    PlayListListViewItemDelegate* delegate = new PlayListListViewItemDelegate(this);
-    ui.listItems->setItemDelegate(delegate);
-    ui.listItems->setAutoFillBackground(true);
 
+    connect(m_playListModel, &QAbstractListModel::rowsInserted, [this](const QModelIndex& parent, int first, int last) {
+        updateUISearchTotalNumberLabel();
+        searchItems();
+    });
     // test
     //QFileInfo fileInfo("D:\\Softwares\\Jijidown\\Download\\「鏡音鈴」「Gimme×Gimme」 Sour式鏡音Rin×Sour式初音Miku[PV] - 1.gimme bili(Av84791490,P1).mp4");
     //appendFile(fileInfo.absoluteFilePath());
@@ -71,13 +74,6 @@ qsizetype PlayListWidget::getPreviousPlayingIndex(bool* overflow) const
     return curIdx;
 }
 
-void PlayListWidget::itemAdd()
-{
-    QStringList&& files = selectFiles();
-    if (files.isEmpty()) return;
-    appendFiles(files);
-}
-
 void PlayListWidget::resizeEvent(QResizeEvent* e)
 {
     QSize oldSize = e->oldSize();
@@ -89,7 +85,23 @@ void PlayListWidget::resizeEvent(QResizeEvent* e)
     QWidget::resizeEvent(e);
 }
 
-void PlayListWidget::itemRemove()
+void PlayListWidget::appendFiles()
+{
+    QStringList&& files = selectFiles();
+    if (files.isEmpty()) return;
+    appendFiles(files);
+}
+
+void PlayListWidget::appendFolder()
+{
+    QString folderPath = selectFolder();
+    if (folderPath.isEmpty()) return;
+    QStringList&& files = listFilesInFolder(folderPath);
+    if (files.isEmpty()) return;
+    appendFiles(files);
+}
+
+void PlayListWidget::removeSelectedItems()
 {
     auto indexes = ui.listItems->selectionModel()->selectedIndexes();
     std::sort(indexes.begin(), indexes.end(), [](const QModelIndex& a, const QModelIndex& b) {
@@ -104,12 +116,25 @@ void PlayListWidget::itemRemove()
     }
 }
 
-void PlayListWidget::itemsClear()
+void PlayListWidget::clearListItems()
 {
+    m_playListModel->clear();
 }
 
-void PlayListWidget::itemSearch()
+void PlayListWidget::searchItems()
 {
+    QString searchText = ui.editSearchBox->text();
+    QRegularExpression regex{ searchText, QRegularExpression::CaseInsensitiveOption };
+    qsizetype foundNumber{ 0 };
+    for (qsizetype i = 0; i < m_playListModel->rowCount(); ++i)
+    {
+        QModelIndex index = m_playListModel->index(i, 0);
+        QString itemText = m_playListModel->data(index, Qt::DisplayRole).value<PlayListItem>().title;
+        bool match = regex.match(itemText).hasMatch();
+        ui.listItems->setRowHidden(i, !match);
+        if (match) ++foundNumber;
+    }
+    updateUISearchFoundNumberLabel(foundNumber);
 }
 
 void PlayListWidget::itemActivated(const QModelIndex& index)
@@ -124,19 +149,52 @@ void PlayListWidget::itemClicked(const QModelIndex& index)
 
 void PlayListWidget::itemDoubleClicked(const QModelIndex& index)
 {
-    if (playCallback)
-        playCallback(index);
+    emit play(index.row());
 }
 
 QStringList PlayListWidget::selectFiles()
 {
     // 打开文件对话框
-    QFileDialog fileDialog(this, tr("Open Files"), "", tr("Video Files (*.mp4 *.avi *.mkv *.mov *.flv *.wmv);;All Files (*)"));
+    QFileDialog fileDialog(this, tr("Open Files"), tr(""), tr("Video Files (*.mp4 *.avi *.mkv *.mov *.flv *.wmv);;All Files (*)"));
     fileDialog.setFileMode(QFileDialog::ExistingFiles);
     if (fileDialog.exec() == QFileDialog::DialogCode::Rejected)
         return {};
     QStringList files = fileDialog.selectedFiles();
     return files;
+}
+
+QString PlayListWidget::selectFolder()
+{
+    // 打开文件夹对话框
+    QFileDialog folderDialog(this, tr("Open Folder"), tr(""));
+    folderDialog.setFileMode(QFileDialog::Directory);
+    if (folderDialog.exec() == QFileDialog::DialogCode::Rejected) return {};
+    QStringList files = folderDialog.selectedFiles();
+    if (files.isEmpty()) return {};
+    return files[0];
+}
+
+QStringList PlayListWidget::listFilesInFolder(const QString& folderPath)
+{
+    QDir dir{ folderPath };
+    if (!dir.exists()) return {};
+    QStringList nameFilters;
+    //nameFilters << "*.mp4" << "*.avi" << "*.mkv" << "*.mov" << "*.flv" << "*.wmv";
+    QFileInfoList fileInfoList = dir.entryInfoList(nameFilters, QDir::Files | QDir::NoSymLinks);
+    QStringList filePaths;
+    for (const QFileInfo& fileInfo : fileInfoList)
+        filePaths.append(fileInfo.absoluteFilePath());
+    return filePaths;
+}
+
+void PlayListWidget::updateUISearchTotalNumberLabel()
+{
+    ui.labelSearchTotalNumber->setText(QString::number(m_playListModel->rowCount()));
+}
+
+void PlayListWidget::updateUISearchFoundNumberLabel(qsizetype foundNumber)
+{
+    ui.labelSearchFoundNumber->setText(QString::number(foundNumber));
 }
 
 

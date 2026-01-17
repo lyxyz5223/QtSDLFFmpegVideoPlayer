@@ -79,6 +79,7 @@ bool AudioPlayer::prepareBeforePlayback()
     }
     // 修改状态为：播放中
     setPlayerState(PlayerState::Playing);
+    return true;
 }
 
 bool AudioPlayer::playAudioFile()
@@ -480,51 +481,78 @@ void AudioPlayer::renderAudio()
 // 异步音频输出
 AudioAdapter::AudioCallbackResult AudioPlayer::renderAudioAsyncCallback(void*& outputBuffer, void*& inputBuffer, unsigned int& nFrames, double& streamTime, AudioAdapter::AudioStreamStatuses& status, AudioAdapter::RawArgsType& rawArgs, AudioAdapter::UserDataType& userData)
 {
-    uint8_t* outBuffer = static_cast<uint8_t*>(outputBuffer);
-    auto oneSize = playbackStateVariables.numberOfAudioOutputChannels * sizeof(uint16_t);
+    auto& numberOfChannels = playbackStateVariables.numberOfAudioOutputChannels;
+    std::span<AudioSampleFormatType> spanOutBuffer{ reinterpret_cast<AudioSampleFormatType*>(outputBuffer), static_cast<size_t>(numberOfChannels * nFrames) };
+    std::span<uint8_t> spanOutBuffer8Bits{ reinterpret_cast<uint8_t*>(outputBuffer), spanOutBuffer.size() * AUDIO_OUTPUT_FORMAT_BYTES_PER_SAMPLE };
+    auto adjustVolume = [&spanOutBuffer, &nFrames, &numberOfChannels, &userData] (double vol) {
+        // 简单音量调整：线性调节
+        for (auto& sample : spanOutBuffer)
+            sample = std::round(sample * vol);
+
+        // 简单EQ音量调整
+        //// 预加重系数（根据音量调整）
+        //double preemphasis = 1.0 + (1.0 - vol) * 0.3;  // 音量越小时补偿越多
+        //// 简单的一阶IIR滤波器
+        //if (!userData.has_value() || userData.type() != typeid(double))
+        //    userData.emplace<double>(0.0);
+        //double& prev = std::any_cast<double&>(userData);
+        //double alpha = 0.05; // 影响频率
+        //for (auto& sample : spanOutBuffer)
+        //{
+        //    double calcSample = static_cast<double>(sample);
+        //    // 高频增强
+        //    calcSample = calcSample + alpha * (calcSample - prev);
+        //    prev = calcSample;
+        //    calcSample *= vol; // 应用音量
+        //    // 限制范围
+        //    auto min = std::numeric_limits<AudioSampleFormatType>::min();
+        //    auto max = std::numeric_limits<AudioSampleFormatType>::max();
+        //    sample = static_cast<int16_t>(calcSample);
+        //    if (sample > max) sample = max;
+        //    else if (sample < min) sample = min;
+        //}
+        };
+
+    uint64_t currentPts = 0;
     std::unique_lock lockMtxStreamQueue(playbackStateVariables.mtxStreamQueue);
-    //for (size_t i = 0; i < nFrames; ++i)
+    if (nFrames && isPlaying() && !playbackStateVariables.streamQueue.empty())
     {
-        if (nFrames && isPlaying() && !playbackStateVariables.streamQueue.empty()/*tryDequeue(streamQueue, one)*/)
-        {
-            auto& one = playbackStateVariables.streamQueue.front();
-            // logger.info("Audio sample: {}", outBuffer[i]);
-            playbackStateVariables.audioClock.store(one.frameTime); // 更新音频时钟
-            auto pts = one.pts;
-            auto timeBase = one.timeBase;
-            auto frameTime = one.frameTime;
-            std::copy(one.dataBytes.begin(), one.dataBytes.end(), outBuffer); // std::span<uint8_t> dataBytes{};
-            //std::copy(one.dataBytes.begin(), one.dataBytes.end(), outBuffer + i * oneSize); // std::vector<uint8_t> dataBytes{}
-            //std::memcpy(outBuffer + i * oneSize, one.dataBytes.data(), one.dataBytes.size());
-            playbackStateVariables.streamQueue.pop();
+        auto& one = playbackStateVariables.streamQueue.front();
+        // logger.info("Audio sample: {}", outBuffer[i]);
+        playbackStateVariables.audioClock.store(one.frameTime); // 更新音频时钟
+        auto pts = currentPts = one.pts;
+        auto timeBase = one.timeBase;
+        auto frameTime = one.frameTime;
+        std::copy(one.dataBytes.begin(), one.dataBytes.end(), spanOutBuffer8Bits.data()); // std::span<uint8_t> dataBytes{};
+        //std::copy(one.dataBytes.begin(), one.dataBytes.end(), outBuffer + i * oneSize); // std::vector<uint8_t> dataBytes{}
+        //std::memcpy(outBuffer + i * oneSize, one.dataBytes.data(), one.dataBytes.size());
+        adjustVolume((!playbackStateVariables.isMute.load()) ? playbackStateVariables.volume.load() : 0.0);
+        playbackStateVariables.streamQueue.pop();
 
-            // 填充音频数据后调用事件回调
-            FrameContext frameCtx{
-                playbackStateVariables.formatCtx,
-                playbackStateVariables.codecCtx.get(),
-                playbackStateVariables.streamIndex,
-                { static_cast<uint8_t*>(outputBuffer), oneSize * nFrames },
-                oneSize * nFrames,
-                nFrames,
-                playbackStateVariables.codecCtx->sample_rate,
-                playbackStateVariables.numberOfAudioOutputChannels,
-                pts,
-                timeBase,
-                frameTime,
-                streamTime
-            };
-            AudioRenderEvent audioEvent{ &frameCtx };
-            event(&audioEvent);
-
-        }
-        else
-        {
-            for (size_t i = 0; i < nFrames; ++i)
-                for (size_t j = 0; j < oneSize && i < nFrames; ++j)
-                    outBuffer[i * oneSize + j] = 0; // 静音填充
-            // logger.info("音频缓冲区下溢，填充静音数据。Audio sample: {}", outBuffer[i]);
-        }
+        // 填充音频数据后调用事件回调
+        FrameContext frameCtx{
+            playbackStateVariables.formatCtx,
+            playbackStateVariables.codecCtx.get(),
+            playbackStateVariables.streamIndex,
+            { static_cast<uint8_t*>(outputBuffer), spanOutBuffer8Bits.size() },
+            spanOutBuffer8Bits.size(),
+            nFrames,
+            playbackStateVariables.codecCtx->sample_rate,
+            playbackStateVariables.numberOfAudioOutputChannels,
+            pts,
+            timeBase,
+            frameTime,
+            streamTime
+        };
+        AudioRenderEvent audioEvent{ &frameCtx };
+        event(&audioEvent);
     }
+    else
+    {
+        adjustVolume(0.0);
+        // logger.info("音频缓冲区下溢，填充静音数据。Audio sample: {}", outBuffer[i]);
+    }
+
     //lockMtxStreamQueue.unlock();
     // 同步时钟，放在数据填充后可以免去seek后音频时钟跳动的问题（seek后未来得及修改时钟到正确的时钟就执行时钟同步）
     if (playbackStateVariables.playOptions.clockSyncFunction)
@@ -537,16 +565,15 @@ AudioAdapter::AudioCallbackResult AudioPlayer::renderAudioAsyncCallback(void*& o
             if (sleepTime > 0)
             {
                 // 需要等待
-                logger.info("Audio sleep: {} ms", sleepTime);
+                logger.trace("Audio sleep: {} ms", sleepTime);
                 ThreadSleepMs(sleepTime);
             }
             else //if (sleepTime < 0)
             {
                 // 落后太多，跳过帧
-                logger.info("Audio drop frame to catch up: {} ms", -sleepTime);
-                //std::unique_lock lockMtxStreamQueue(playbackStateVariables.mtxStreamQueue);
-                //for (playbackStateVariables.streamQueue.size() && playbackStateVariables.streamQueue.front().pts < playbackStateVariables.streamQueue.front().pts + sleepTime)
-                //    playbackStateVariables.streamQueue.pop();
+                logger.trace("Audio drop frame to catch up: {} ms", -sleepTime);
+                while (!playbackStateVariables.streamQueue.empty() && playbackStateVariables.streamQueue.front().pts < currentPts)
+                    playbackStateVariables.streamQueue.pop();
             }
         }
     }
@@ -560,10 +587,10 @@ AudioAdapter::AudioCallbackResult AudioPlayer::renderAudioAsyncCallback(void*& o
         // 状态改变，播放结束
         if (playerState == PlayerState::Stopped || playerState == PlayerState::Stopping)
         {
-            logger.info("Audio playback stopped by user.");
+            logger.trace("Audio playback stopped by user.");
             return AudioAdapter::Abort;
         }
-        logger.info("Audio playback finished.");
+        logger.trace("Audio playback finished.");
         return AudioAdapter::Complete;
     }
     return AudioAdapter::Continue;

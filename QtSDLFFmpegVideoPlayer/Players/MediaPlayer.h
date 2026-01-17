@@ -353,7 +353,10 @@ public:
         lockSinglePlaybackMtx.unlock();
         this->setFilePath(filePath);
         if (!prepareToPlay())
+        {
+            isPlayingFlag.store(false); // 重置状态
             return false;
+        }
         bool rst = playMediaFile(options);
         lockSinglePlaybackMtx.lock();
         isPlayingFlag.store(false);
@@ -366,7 +369,10 @@ public:
         isPlayingFlag.store(true);
         lockSinglePlaybackMtx.unlock();
         if (!prepareToPlay())
+        {
+            isPlayingFlag.store(false); // 重置状态
             return false;
+        }
         bool rst = playMediaFile();
         lockSinglePlaybackMtx.lock();
         isPlayingFlag.store(false);
@@ -393,6 +399,9 @@ public:
             requestTaskQueueHandler->stop();
     }
 
+
+    void mute() { setMute(true); }
+    void unmute() { setMute(false); }
     virtual void setMute(bool state) override {
         return audioPlayer->setMute(state);
     }

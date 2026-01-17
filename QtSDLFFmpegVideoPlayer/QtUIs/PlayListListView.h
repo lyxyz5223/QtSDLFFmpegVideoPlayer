@@ -210,3 +210,15 @@ private:
     int iconModeColumnWidth = 300;
 };
 
+class PlayListListView : public QListView
+{
+    Q_OBJECT
+public:
+    explicit PlayListListView(QWidget* parent = nullptr);
+    ~PlayListListView() = default;
+protected:
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
+signals:
+    // 空白位置双击
+    void backgroundDoubleClicked();
+};
