@@ -91,4 +91,14 @@ Changed   :  No
 
 Full text of MIT is given in LICENSES/spdlog_LICENSE.txt
 
+Component :  iconoir
+SPDX-ID   :  MIT
+Location  :  LICENSES/iconoir_LICENSE.txt
+Home-page :  https://github.com/iconoir-icons/iconoir
+            https://iconoir.com/
+License   :  https://github.com/iconoir-icons/iconoir/blob/main/LICENSE
+Changed   :  No
+
+Full text of MIT is given in LICENSES/iconoir_LICENSE.txt
+
 --------------------------------------------------------------------------------

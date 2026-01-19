@@ -6,12 +6,12 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>811</width>
+    <width>842</width>
     <height>438</height>
    </rect>
   </property>
   <property name="windowTitle">
-   <string>QtSDLFFmpegVideoPlayer</string>
+   <string>Player</string>
   </property>
   <widget class="QWidget" name="centralWidget">
    <layout class="QGridLayout" name="gridLayout">
@@ -29,6 +29,11 @@
         <height>288</height>
        </size>
       </property>
+      <layout class="QGridLayout" name="gridLayout_3">
+       <item row="0" column="0">
+        <layout class="QGridLayout" name="gridLayoutVideoRenderWidget"/>
+       </item>
+      </layout>
      </widget>
     </item>
     <item row="2" column="0">
@@ -263,6 +268,23 @@
        </spacer>
       </item>
       <item>
+       <widget class="RoundedIconButton" name="btnPlayOptions">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="text">
+         <string/>
+        </property>
+        <property name="icon">
+         <iconset resource="../resources/QtSDLFFmpegVideoPlayer.qrc">
+          <normaloff>:/svgs/svgs/settings.svg</normaloff>:/svgs/svgs/settings.svg</iconset>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="RoundedIconButton" name="btnVolume">
         <property name="sizePolicy">
          <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
@@ -340,7 +362,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>811</width>
+     <width>842</width>
      <height>21</height>
     </rect>
    </property>
@@ -463,8 +485,8 @@
    <slot>mediaSliderMoved(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>39</x>
-     <y>401</y>
+     <x>48</x>
+     <y>356</y>
     </hint>
     <hint type="destinationlabel">
      <x>27</x>
@@ -479,8 +501,8 @@
    <slot>mediaSliderPressed()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>56</x>
-     <y>401</y>
+     <x>65</x>
+     <y>356</y>
     </hint>
     <hint type="destinationlabel">
      <x>50</x>
@@ -495,8 +517,8 @@
    <slot>mediaSliderReleased()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>88</x>
-     <y>401</y>
+     <x>97</x>
+     <y>356</y>
     </hint>
     <hint type="destinationlabel">
      <x>75</x>
@@ -511,8 +533,8 @@
    <slot>mediaSliderValueChanged(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>112</x>
-     <y>401</y>
+     <x>121</x>
+     <y>356</y>
     </hint>
     <hint type="destinationlabel">
      <x>108</x>
@@ -527,8 +549,8 @@
    <slot>mediaPlayPause()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>278</x>
-     <y>446</y>
+     <x>188</x>
+     <y>406</y>
     </hint>
     <hint type="destinationlabel">
      <x>213</x>
@@ -543,8 +565,8 @@
    <slot>mediaStop()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>312</x>
-     <y>446</y>
+     <x>222</x>
+     <y>406</y>
     </hint>
     <hint type="destinationlabel">
      <x>279</x>
@@ -559,8 +581,8 @@
    <slot>mediaPrevious()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>346</x>
-     <y>446</y>
+     <x>256</x>
+     <y>406</y>
     </hint>
     <hint type="destinationlabel">
      <x>316</x>
@@ -575,8 +597,8 @@
    <slot>mediaNext()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>380</x>
-     <y>446</y>
+     <x>290</x>
+     <y>406</y>
     </hint>
     <hint type="destinationlabel">
      <x>351</x>
@@ -591,8 +613,8 @@
    <slot>mediaVolumeMuteUnmute()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>507</x>
-     <y>434</y>
+     <x>429</x>
+     <y>406</y>
     </hint>
     <hint type="destinationlabel">
      <x>580</x>
@@ -607,8 +629,8 @@
    <slot>mediaVolumeSliderMoved(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>563</x>
-     <y>428</y>
+     <x>519</x>
+     <y>392</y>
     </hint>
     <hint type="destinationlabel">
      <x>640</x>
@@ -623,12 +645,28 @@
    <slot>mediaVolumeSliderValueChanged(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>551</x>
-     <y>429</y>
+     <x>519</x>
+     <y>392</y>
     </hint>
     <hint type="destinationlabel">
      <x>620</x>
      <y>400</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnPlayOptions</sender>
+   <signal>clicked()</signal>
+   <receiver>QtSDLFFmpegVideoPlayerClass</receiver>
+   <slot>mediaOpenPlayOptionsDialog()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>385</x>
+     <y>374</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>348</x>
+     <y>371</y>
     </hint>
    </hints>
   </connection>
@@ -646,5 +684,6 @@
   <slot>mediaVolumeMuteUnmute()</slot>
   <slot>mediaVolumeSliderMoved(int)</slot>
   <slot>mediaVolumeSliderValueChanged(int)</slot>
+  <slot>mediaOpenPlayOptionsDialog()</slot>
  </slots>
 </ui>

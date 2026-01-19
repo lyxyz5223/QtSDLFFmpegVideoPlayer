@@ -1,0 +1,63 @@
+#pragma once
+#include <qmenu.h>
+#include <qpropertyanimation.h>
+#include "AnimatedMenuAction.h"
+
+class AnimatedMenu :
+    public QMenu
+{
+public:
+    ~AnimatedMenu() {}
+    AnimatedMenu(QWidget* parent = nullptr);
+
+
+
+    bool hasChildMenu() const {
+        auto actions = this->actions();
+        for (auto action : actions)
+        {
+            if (action->menu())
+                return true;
+        }
+        return false;
+    }
+    bool hasIcon() const {
+        auto actions = this->actions();
+        for (auto action : actions)
+        {
+            if (!action->icon().isNull())
+                return true;
+        }
+        return false;
+    }
+    AnimatedMenuAction* actionAt(const QPoint& pos) const {
+        return (AnimatedMenuAction*)QMenu::actionAt(pos);
+    }
+    bool eventFilter(QObject* watched, QEvent* e) override;
+    void setCursorPos(QPoint pos) {
+        cursorPos = pos;
+    }
+    QPoint getCursorPos() const {
+        return cursorPos;
+    }
+    //bool close() override {
+
+    //}
+public slots:
+    void startCloseAnimation();
+    void startShowAnimation();
+
+protected:
+    void paintEvent(QPaintEvent* e) override;
+    void mouseMoveEvent(QMouseEvent* e) override;
+    void mouseReleaseEvent(QMouseEvent* e) override;
+    bool event(QEvent* e) override;
+    void showEvent(QShowEvent* e) override;
+    void closeEvent(QCloseEvent* e) override;
+
+private:
+    bool hasPlayShowAni = false;
+    bool hasPlayCloseAni = false;
+    QPoint cursorPos;
+};
+

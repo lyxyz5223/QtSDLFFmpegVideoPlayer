@@ -3,38 +3,63 @@
 #include <QtWidgets/QMainWindow>
 #include "ui_QtSDLFFmpegVideoPlayer.h"
 #include <thread>
+#include <QList>
+
+#ifdef USE_SDL_WIDGET
+#elif defined(USE_QT_MULTIMEDIA_WIDGET)
+#else
+#endif
+
+#ifdef USE_SDL_WIDGET
 #include "SDLWidget.h"
 #include <SDLMediaPlayer.h>
-#include <QList>
+#elif defined(USE_QT_MULTIMEDIA_WIDGET)
+#include <QtMultimediaWidgets>
+#include <QtMediaPlayer.h>
+#else
+#endif
+
+#ifdef USE_SDL_WIDGET
+using TargetMediaPlayer = SDLMediaPlayer;
+using VideoWidget = SDLWidget;
+#elif defined(USE_QT_MULTIMEDIA_WIDGET)
+using TargetMediaPlayer = QtMultiMediaPlayer;
+using VideoWidget = QVideoWidget;
+#else
+using TargetMediaPlayer = MediaPlayer;
+#endif
+
+
 
 class QtSDLFFmpegVideoPlayer : public QMainWindow
 {
     Q_OBJECT
 
-    class QtSDLMediaPlayer : public SDLMediaPlayer {
+    friend class QtSDLMediaPlayer;
+    class QtSDLMediaPlayer : public TargetMediaPlayer {
         QtSDLFFmpegVideoPlayer& owner;
         AtomicBool inited = false;
         AtomicInt seekingCount{ 0 };
 
     public:
-        QtSDLMediaPlayer(QtSDLFFmpegVideoPlayer& owner) : SDLMediaPlayer(), owner(owner) {}
+        QtSDLMediaPlayer(QtSDLFFmpegVideoPlayer& owner) : TargetMediaPlayer(), owner(owner) {}
         // 重写事件处理函数
         virtual void stopEvent(MediaPlaybackStateChangeEvent* e) override {
-            SDLMediaPlayer::stopEvent(e);
+            TargetMediaPlayer::stopEvent(e);
             inited.store(false); // 重置初始化状态
             owner.afterPlaybackCallback();
             owner.setPlayPauseButtonState(false);
         }
         virtual void pauseEvent(MediaPlaybackStateChangeEvent* e) override {
-            SDLMediaPlayer::pauseEvent(e);
+            TargetMediaPlayer::pauseEvent(e);
             owner.setPlayPauseButtonState(false);
         }
         virtual void resumeEvent(MediaPlaybackStateChangeEvent* e) override {
-            SDLMediaPlayer::resumeEvent(e);
+            TargetMediaPlayer::resumeEvent(e);
             owner.setPlayPauseButtonState(true);
         }
         virtual void startEvent(MediaPlaybackStateChangeEvent* e) override {
-            SDLMediaPlayer::startEvent(e);
+            TargetMediaPlayer::startEvent(e);
             inited.store(false); // 重置初始化状态
             owner.setPlayPauseButtonState(true);
         }
@@ -58,7 +83,7 @@ class QtSDLFFmpegVideoPlayer : public QMainWindow
             }
         }
         virtual void videoRenderEvent(VideoRenderEvent* e) override {
-            SDLMediaPlayer::videoRenderEvent(e);
+            TargetMediaPlayer::videoRenderEvent(e);
             if (seekingCount.load() != 0)
                 return;
             auto ctx = e->frameContext();
@@ -71,7 +96,7 @@ class QtSDLFFmpegVideoPlayer : public QMainWindow
             owner.videoRenderCallback(*ctx);
         }
         virtual void audioRenderEvent(AudioRenderEvent* e) override {
-            SDLMediaPlayer::audioRenderEvent(e);
+            TargetMediaPlayer::audioRenderEvent(e);
             if (seekingCount.load() != 0)
                 return;
             auto ctx = e->frameContext();
@@ -84,7 +109,6 @@ class QtSDLFFmpegVideoPlayer : public QMainWindow
             owner.audioRenderCallback(*ctx);
         }
     };
-
 public:
     QtSDLFFmpegVideoPlayer(QWidget *parent = nullptr);
     ~QtSDLFFmpegVideoPlayer();
@@ -125,6 +149,8 @@ public slots:
     void mediaVolumeSliderMoved(int);
     void mediaVolumeSliderValueChanged(int);
 
+    void mediaOpenPlayOptionsDialog();
+
 private:
     Ui::QtSDLFFmpegVideoPlayerClass ui;
     int argc = 0;
@@ -135,15 +161,44 @@ private:
     Logger logger{ "QtSDLFFmpegVideoPlayer", qtSDLFFmpegVideoPlayerLoggerSinks };
 
     // SDL渲染窗口
-    SDLWidget* sdlWidget{ nullptr };
+#if defined(USE_QT_MULTIMEDIA_WIDGET)
+    VideoWidget* videoWidget{ nullptr };
+    QMediaPlayer* qMediaPlayer{ nullptr };
+    QAudioOutput* qAudioOutput{ nullptr };
+#else
+    std::unique_ptr<VideoWidget> videoWidget{ nullptr };
+#endif
     QTimer* sdlEventTimer{ nullptr }; // SDL事件轮询定时器，只执行一次，回调中循环
     QtSDLMediaPlayer mediaPlayer{ *this }; // 媒体播放器实例
 
     int64_t duration{ 0 }; // 媒体总时长，单位毫秒，滑块的int类型大约可以存储24.85513480324074074...天
+    int64_t currentTimeS{ 0 }; // 当前播放位置，单位秒
 
     // 
     std::atomic<bool> isMediaSliderMoving{ false };
     int mediaSeekingTime{ 0 };
+
+    void createVideoWidget() {
+#ifdef USE_SDL_WIDGET
+        videoWidget = std::make_unique<VideoWidget>((HWND)ui.videoRenderWidget->winId(), "direct3d11");
+#elif defined(USE_QT_MULTIMEDIA_WIDGET)
+        videoWidget = new VideoWidget(ui.videoRenderWidget);
+        ui.videoRenderWidget->layout()->addWidget(videoWidget);
+#else
+#endif
+    }
+    void destroyVideoWidget() {
+    }
+    void moveVideoWidget(QPoint pos) {
+#ifdef USE_QT_MULTIMEDIA_WIDGET
+        videoWidget->move(pos);
+#endif
+    }
+    void resizeVideoWidget(QSize size) {
+#ifdef USE_QT_MULTIMEDIA_WIDGET
+        videoWidget->resize(size);
+#endif
+    }
 
     // 设置按钮为播放或暂停状态
     void setPlayPauseButtonState(bool isPlaying) {
@@ -225,4 +280,7 @@ private:
     void playerPlayByPlayListIndex(qsizetype index);
 
     void playerSetVolume(double volume);
+
+
 };
+

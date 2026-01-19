@@ -3,6 +3,7 @@
 #include <QResizeEvent>
 #include <QDir>
 #include <QRegularExpression>
+#include "AnimatedMenu.h"
 
 PlayListWidget::PlayListWidget(QWidget* parent)
     : QWidget(parent)
@@ -152,6 +153,44 @@ void PlayListWidget::itemDoubleClicked(const QModelIndex& index)
     emit play(index.row());
 }
 
+void PlayListWidget::moveItemUpToTop()
+{
+    moveItems(-1, true);
+}
+
+void PlayListWidget::moveItemUp()
+{
+    moveItems(-1, false);
+}
+
+void PlayListWidget::moveItemDown()
+{
+    moveItems(1, false);
+}
+
+void PlayListWidget::moveItemDownToBottom()
+{
+    moveItems(1, true);
+}
+
+void PlayListWidget::sortItems()
+{
+    // 打开排序菜单
+    AnimatedMenu sortMenu{ this };
+    sortMenu.addAction(tr("按标题（升序）"), this, [this]() { m_playListModel->sort(PlayListItemListModel::ByTitle, Qt::AscendingOrder); });
+    sortMenu.addAction(tr("按标题（降序）"), this, [this]() { m_playListModel->sort(PlayListItemListModel::ByTitle, Qt::DescendingOrder); });
+    sortMenu.addAction(tr("按文件名（升序）"), this, [this]() { m_playListModel->sort(PlayListItemListModel::ByFileName, Qt::AscendingOrder); });
+    sortMenu.addAction(tr("按文件名（降序）"), this, [this]() { m_playListModel->sort(PlayListItemListModel::ByFileName, Qt::DescendingOrder); });
+    sortMenu.addAction(tr("按时长（升序）"), this, [this]() { m_playListModel->sort(PlayListItemListModel::ByDuration, Qt::AscendingOrder); });
+    sortMenu.addAction(tr("按时长（降序）"), this, [this]() { m_playListModel->sort(PlayListItemListModel::ByDuration, Qt::DescendingOrder); });
+    sortMenu.addAction(tr("按文件大小（升序）"), this, [this]() { m_playListModel->sort(PlayListItemListModel::ByFileSize, Qt::AscendingOrder); });
+    sortMenu.addAction(tr("按文件大小（降序）"), this, [this]() { m_playListModel->sort(PlayListItemListModel::ByFileSize, Qt::DescendingOrder); });
+    sortMenu.addAction(tr("按文件路径（升序）"), this, [this]() { m_playListModel->sort(PlayListItemListModel::ByUrl, Qt::AscendingOrder); });
+    sortMenu.addAction(tr("按文件路径（降序）"), this, [this]() { m_playListModel->sort(PlayListItemListModel::ByUrl, Qt::DescendingOrder); });
+    sortMenu.addAction(tr("随机"), this, [this]() { m_playListModel->sort(PlayListItemListModel::ByRandom); });
+    sortMenu.exec(ui.btnSortItems->mapToGlobal(QPoint(ui.btnSortItems->size().width(), ui.btnSortItems->size().height())));
+}
+
 QStringList PlayListWidget::selectFiles()
 {
     // 打开文件对话框
@@ -195,6 +234,74 @@ void PlayListWidget::updateUISearchTotalNumberLabel()
 void PlayListWidget::updateUISearchFoundNumberLabel(qsizetype foundNumber)
 {
     ui.labelSearchFoundNumber->setText(QString::number(foundNumber));
+}
+
+void PlayListWidget::moveItems(int64_t offset, bool most)
+{
+    if (offset == 0)
+        return;
+    auto selModel = ui.listItems->selectionModel();
+    auto selIdxes = selModel->selectedIndexes();
+    if (selIdxes.isEmpty())
+        return;
+    std::sort(selIdxes.begin(), selIdxes.end(), [](const QModelIndex& a, const QModelIndex& b) {
+        return a.row() < b.row();
+        });
+    if (!most)
+    {
+        auto rowCount = m_playListModel->rowCount();
+        auto moveRow = [this, &selModel, &offset, &rowCount](const QModelIndex& idx) -> bool {
+            if (!idx.isValid() || idx.row() >= rowCount)
+                return false;
+            int destRow = idx.row() + offset;
+            if (destRow < 0 || destRow >= rowCount)
+                return false;
+            m_playListModel->moveRows(QModelIndex(), idx.row(), 1, QModelIndex(), destRow + ((offset > 0) ? 1 : 0));
+            selModel->select(m_playListModel->index(destRow, 0), QItemSelectionModel::Select);
+            return true;
+        };
+        if (offset < 0)
+        {
+            if (selIdxes.front().row() != 0)
+                for (auto& idx : selIdxes)
+                    if (!moveRow(idx)) continue;
+        }
+        else
+        {
+            if (selIdxes.back().row() != rowCount - 1)
+                for (qsizetype i = selIdxes.size(); i > 0; --i)
+                {
+                    auto& idx = selIdxes[i - 1];
+                    if (!moveRow(idx)) continue;
+                }
+        }
+        return;
+    }
+    if (offset < 0)
+    {
+        size_t idxOffset{ 0 };
+        for (auto& idx : selIdxes)
+        {
+            if (!idx.isValid() || idx.row() >= m_playListModel->rowCount())
+                continue;
+            m_playListModel->moveRows(QModelIndex(), idx.row(), 1, QModelIndex(), idxOffset);
+            selModel->select(m_playListModel->index(idxOffset, 0), QItemSelectionModel::Select);
+            ++idxOffset;
+        }
+    }
+    else
+    {
+        size_t idxOffset{ 0 };
+        for (auto& idx : selIdxes)
+        {
+            auto rowCount = m_playListModel->rowCount();
+            if (!idx.isValid() || idx.row() >= rowCount)
+                continue;
+            m_playListModel->moveRows(QModelIndex(), idx.row() - idxOffset, 1, QModelIndex(), rowCount);
+            selModel->select(m_playListModel->index(rowCount - 1, 0), QItemSelectionModel::Select);
+            ++idxOffset;
+        }
+    }
 }
 
 

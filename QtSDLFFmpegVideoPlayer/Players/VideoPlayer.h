@@ -5,8 +5,8 @@ class VideoPlayer : public PlayerInterface, private ConcurrentQueueOps
 {
 public:
     // 用于视频帧队列
-    static constexpr int MAX_VIDEO_FRAME_QUEUE_SIZE = 20; // n frames
-    static constexpr int MIN_VIDEO_FRAME_QUEUE_SIZE = 10; // n frames
+    static constexpr int MAX_VIDEO_FRAME_QUEUE_SIZE = 50; // n frames
+    static constexpr int MIN_VIDEO_FRAME_QUEUE_SIZE = 20; // n frames
     // 用于ffmpeg视频解码和播放
     // 下面两个常量需同时满足，解码才会暂停
     static constexpr size_t MAX_VIDEO_PACKET_QUEUE_SIZE = 200; // 最大视频帧队列数量
@@ -176,7 +176,9 @@ private:
     }
 
 public:
-    VideoPlayer() : PlayerInterface(logger) {}
+    VideoPlayer() : PlayerInterface(logger) {
+        //logger.setLevel(LogLevel::trace);
+    }
     ~VideoPlayer() {
         stop();
     }

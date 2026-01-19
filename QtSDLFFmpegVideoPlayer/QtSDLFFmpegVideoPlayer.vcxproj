@@ -37,12 +37,12 @@
   </ImportGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="QtSettings">
     <QtInstall>6.7.2_msvc2019_64</QtInstall>
-    <QtModules>core;gui;widgets</QtModules>
+    <QtModules>core;gui;widgets;multimediawidgets;svg</QtModules>
     <QtBuildConfig>debug</QtBuildConfig>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'" Label="QtSettings">
     <QtInstall>6.7.2_msvc2019_64</QtInstall>
-    <QtModules>core;gui;widgets</QtModules>
+    <QtModules>core;gui;widgets;multimediawidgets;svg</QtModules>
     <QtBuildConfig>release</QtBuildConfig>
   </PropertyGroup>
   <Target Name="QtMsBuildNotFound" BeforeTargets="CustomBuild;ClCompile" Condition="!Exists('$(QtMsBuild)\qt.targets') or !Exists('$(QtMsBuild)\qt.props')">
@@ -60,11 +60,11 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
-    <IncludePath>.\Utils;.\Players;.\SDLUtils;.\AudioAdapter;$(IncludePath)</IncludePath>
+    <IncludePath>.\Utils;.\Players;.\SDLUtils;.\AudioAdapter;.\QtUtils;$(IncludePath)</IncludePath>
     <LibraryPath>$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
-    <IncludePath>.\Utils;.\Players;.\SDLUtils;.\AudioAdapter;$(IncludePath)</IncludePath>
+    <IncludePath>.\Utils;.\Players;.\SDLUtils;.\AudioAdapter;.\QtUtils;$(IncludePath)</IncludePath>
     <LibraryPath>$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -73,7 +73,7 @@
       <AdditionalLibraryDirectories>..\..\Libraries\ffmpeg-shared\lib;..\..\Libraries\SDL3\lib\x64;..\..\Libraries\rtaudio-6.0.1\build\Debug;..\..\Libraries\portaudio-19.7.0\build\msvc\x64\Debug;..\..\Libraries\Logger\build\Debugx64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <ClCompile>
-      <PreprocessorDefinitions>HAVE_RTAUDIO;HAVE_PORTAUDIO;USE_STD_FORMAT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>HAVE_RTAUDIO;HAVE_PORTAUDIO;USE_STD_FORMAT;USE_QT_MULTIMEDIA_WIDGET;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalIncludeDirectories>..\..\Libraries\ffmpeg-shared\include;..\..\Libraries\SDL3\include;..\..\Libraries\rtaudio-6.0.1;..\..\Libraries\portaudio-19.7.0\include;..\..\Libraries\Logger\include;..\..\Libraries\ConcurrentQueue;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
@@ -82,7 +82,7 @@
     <ClCompile>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalIncludeDirectories>..\..\Libraries\ffmpeg-shared\include;..\..\Libraries\SDL3\include;..\..\Libraries\rtaudio-6.0.1;..\..\Libraries\portaudio-19.7.0\include;..\..\Libraries\Logger\include;..\..\Libraries\ConcurrentQueue;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>HAVE_RTAUDIO;HAVE_PORTAUDIO;USE_STD_FORMAT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>HAVE_RTAUDIO;HAVE_PORTAUDIO;USE_STD_FORMAT;USE_QT_MULTIMEDIA_WIDGET;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
       <AdditionalDependencies>SDL3.lib;avcodec.lib;avdevice.lib;avfilter.lib;avformat.lib;avutil.lib;swresample.lib;swscale.lib;rtaudio.lib;portaudio_x64.lib;Logger.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -122,11 +122,15 @@
     <ClCompile Include="Players\MediaPlayer.cpp" />
     <ClCompile Include="Players\PlayerPredefine.cpp" />
     <ClCompile Include="Players\VideoPlayer.cpp" />
+    <ClCompile Include="QtUIs\AnimatedMenu.cpp" />
+    <ClCompile Include="QtUIs\AnimatedMenuAction.cpp" />
     <ClCompile Include="QtUIs\PlayListListView.cpp" />
     <ClCompile Include="QtUIs\PlayListWidget.cpp" />
+    <ClCompile Include="QtUIs\PlayOptionsWidget.cpp" />
     <ClCompile Include="QtUIs\QtSDLFFmpegVideoPlayer.cpp" />
     <ClCompile Include="QtUIs\RoundedIconButton.cpp" />
     <ClCompile Include="QtUIs\SDLWidget.cpp" />
+    <ClCompile Include="QtUtils\QtMediaPlayer.cpp" />
     <ClCompile Include="SDLUtils\SDLApp.cpp" />
     <ClCompile Include="SDLUtils\SDLMediaPlayer.cpp" />
     <ClCompile Include="AudioAdapter\AudioAdapter.cpp" />
@@ -142,7 +146,11 @@
     <ClInclude Include="Players\VideoPlayer.h" />
     <QtMoc Include="QtUIs\PlayListWidget.h" />
     <QtMoc Include="QtUIs\PlayListListView.h" />
+    <QtMoc Include="QtUIs\AnimatedMenuAction.h" />
+    <ClInclude Include="QtUIs\AnimatedMenu.h" />
+    <QtMoc Include="QtUIs\PlayOptionsWidget.h" />
     <ClInclude Include="QtUIs\SDLWidget.h" />
+    <ClInclude Include="QtUtils\QtMediaPlayer.h" />
     <ClInclude Include="SDLUtils\SDLApp.h" />
     <ClInclude Include="SDLUtils\SDLMediaPlayer.h" />
     <ClInclude Include="Utils\AtomicWaitObject.h" />
@@ -154,6 +162,7 @@
   </ItemGroup>
   <ItemGroup>
     <QtUic Include="QtUIs\PlayListWidget.ui" />
+    <QtUic Include="QtUIs\PlayOptionsWidget.ui" />
     <QtUic Include="QtUIs\QtSDLFFmpegVideoPlayer.ui" />
   </ItemGroup>
   <ItemGroup>

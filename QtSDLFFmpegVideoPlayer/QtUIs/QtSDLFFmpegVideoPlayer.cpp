@@ -1,10 +1,16 @@
 #include "QtSDLFFmpegVideoPlayer.h"
-#include "SDLApp.h"
 #include <QTimer>
 #include <QTime>
 #include <QFileDialog>
 #include "PlayListWidget.h"
 #include <QThread>
+#include "PlayOptionsWidget.h"
+#ifdef USE_SDL_WIDGET
+#include "SDLApp.h"
+#elif defined(USE_QT_MULTIMEDIA_WIDGET)
+#include <QMediaPlayer>
+#else
+#endif
 
 QtSDLFFmpegVideoPlayer::QtSDLFFmpegVideoPlayer(QWidget* parent)
     : QMainWindow(parent)
@@ -14,11 +20,16 @@ QtSDLFFmpegVideoPlayer::QtSDLFFmpegVideoPlayer(QWidget* parent)
     ui.videoRenderWidget->setAttribute(Qt::WA_OpaquePaintEvent, true);
     ui.videoRenderWidget->setAttribute(Qt::WA_PaintOnScreen, true);
     ui.videoRenderWidget->setAttribute(Qt::WA_NativeWindow, true);
-    ui.videoRenderWidget->resize(size());
     ui.videoRenderWidget->show();
     // 创建SDL窗口和渲染器
-    sdlWidget = new SDLWidget((HWND)ui.videoRenderWidget->winId());
-    sdlWidget->show();
+    createVideoWidget();
+    videoWidget->show();
+#ifdef USE_QT_MULTIMEDIA_WIDGET
+    qMediaPlayer = new QMediaPlayer(this);
+    qAudioOutput = new QAudioOutput(this);
+    qMediaPlayer->setVideoOutput(videoWidget);
+    qMediaPlayer->setAudioOutput(qAudioOutput);
+#endif
     // 启动SDL事件循环定时器，单次触发，间隔0ms
     sdlEventTimer = new QTimer(this);
     sdlEventTimer->setSingleShot(true);
@@ -47,11 +58,12 @@ QtSDLFFmpegVideoPlayer::QtSDLFFmpegVideoPlayer(QWidget* parent)
     // 播放列表
     // 绑定播放器控制按钮槽函数
     ui.playListDockWidgetContents->connect(ui.playListDockWidgetContents, &PlayListWidget::play, this, &QtSDLFFmpegVideoPlayer::playerPlayByPlayListIndex);
+
 }
 
 QtSDLFFmpegVideoPlayer::~QtSDLFFmpegVideoPlayer()
 {
-
+    destroyVideoWidget();
 }
 
 bool QtSDLFFmpegVideoPlayer::nativeEvent(const QByteArray & eventType, void* message, qintptr * result)
@@ -65,7 +77,11 @@ void QtSDLFFmpegVideoPlayer::closeEvent(QCloseEvent* e)
     sdlEventTimer->stop();
     sdlEventTimer->disconnect();
     sdlEventTimer->deleteLater();
+#ifdef USE_SDL_WIDGET
     SDLApp::instance()->stopEventLoopAsync();
+#elif defined(USE_QT_MULTIMEDIA_WIDGET)
+#else
+#endif
     QMainWindow::closeEvent(e);
 }
 
@@ -80,7 +96,11 @@ void QtSDLFFmpegVideoPlayer::resizeEvent(QResizeEvent* e)
 
 void QtSDLFFmpegVideoPlayer::sdlEventLoop()
 {
+#ifdef USE_SDL_WIDGET
     SDLApp::instance()->runEventLoop();
+#elif defined(USE_QT_MULTIMEDIA_WIDGET)
+#else
+#endif
 }
 
 void QtSDLFFmpegVideoPlayer::selectFilesAndPlay()
@@ -175,6 +195,12 @@ void QtSDLFFmpegVideoPlayer::mediaVolumeSliderValueChanged(int value)
     setVolumeButtonState(vol <= 0, vol);
 }
 
+void QtSDLFFmpegVideoPlayer::mediaOpenPlayOptionsDialog()
+{
+    PlayOptionsWidget optionsWidget(this);
+    optionsWidget.exec();
+}
+
 QString QtSDLFFmpegVideoPlayer::msToQString(uint64_t milliseconds)
 {
     uint64_t totalSeconds = milliseconds / 1000;
@@ -212,34 +238,38 @@ void QtSDLFFmpegVideoPlayer::beforePlaybackCallback(const AVFormatContext* forma
 void QtSDLFFmpegVideoPlayer::videoRenderCallback(const MediaPlayer::VideoFrameContext& frameCtx)
 {
     uint64_t currentTime = calcMsFromTimeStamp(frameCtx.swRawFrame->pts, frameCtx.formatCtx->streams[frameCtx.streamIndex]->time_base);
+    uint64_t curTimeS = currentTime / 1000;
+    if (this->currentTimeS == curTimeS || isMediaSliderMoving)
+        return; // 秒级别未变化则不更新UI，或者用户正在拖动进度条则不更新UI
+    this->currentTimeS = curTimeS;
     auto updateUI = [this, currentTime] {
-        ui.labelMediaCurrentTime->setText(msToQString(currentTime)); // 设置数字时间进度
-        if (!isMediaSliderMoving)
-        {
-            auto sliderMin = ui.sliderMediaProgress->minimum();
-            ui.sliderMediaProgress->setValue(currentTime + sliderMin); // 更新进度条
-        }
+        QString strTime = msToQString(currentTime);
+        ui.labelMediaCurrentTime->setText(strTime); // 设置数字时间进度
+        auto sliderMin = ui.sliderMediaProgress->minimum();
+        ui.sliderMediaProgress->setValue(currentTime + sliderMin); // 更新进度条
     };
     if (QThread::currentThread() == QApplication::instance()->thread())
         updateUI();
     else
-        QMetaObject::invokeMethod(this, updateUI, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(this, updateUI/*, Qt::QueuedConnection*/);
 }
 void QtSDLFFmpegVideoPlayer::audioRenderCallback(const MediaPlayer::AudioFrameContext& frameCtx)
 {
     uint64_t currentTime = frameCtx.frameTime * 1000;
+    uint64_t curTimeS = currentTime / 1000;
+    if (this->currentTimeS == curTimeS || isMediaSliderMoving)
+        return; // 秒级别未变化则不更新UI，或者用户正在拖动进度条则不更新UI
+    this->currentTimeS = curTimeS;
     auto updateUI = [this, currentTime] {
-        ui.labelMediaCurrentTime->setText(msToQString(currentTime)); // 设置数字时间进度
-        if (!isMediaSliderMoving)
-        {
-            auto sliderMin = ui.sliderMediaProgress->minimum();
-            ui.sliderMediaProgress->setValue(currentTime + sliderMin); // 更新进度条
-        }
+        QString strTime = msToQString(currentTime);
+        ui.labelMediaCurrentTime->setText(strTime); // 设置数字时间进度
+        auto sliderMin = ui.sliderMediaProgress->minimum();
+        ui.sliderMediaProgress->setValue(currentTime + sliderMin); // 更新进度条
     };
     if (QThread::currentThread() == QApplication::instance()->thread())
         updateUI();
     else
-        QMetaObject::invokeMethod(this, updateUI, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(this, updateUI/*, Qt::QueuedConnection*/);
 }
 void QtSDLFFmpegVideoPlayer::afterPlaybackCallback()
 {
@@ -258,7 +288,15 @@ void QtSDLFFmpegVideoPlayer::playerPlay(QString filePath)
 {
     std::thread([this, filePath]() {
         mediaPlayer.stop();
-        mediaPlayer.play(filePath.toStdString(), SDLApp::getWindowId(sdlWidget->getSDLWindow()));
+#ifdef USE_SDL_WIDGET
+        mediaPlayer.play(filePath.toStdString(), SDLApp::getWindowId(videoWidget->getSDLWindow()), true);
+#elif defined(USE_QT_MULTIMEDIA_WIDGET)
+        mediaPlayer.play(filePath.toStdString(), videoWidget, true);
+        //qMediaPlayer->stop();
+        //qMediaPlayer->setSource(QUrl::fromLocalFile(filePath));
+        //qMediaPlayer->play();
+#else
+#endif
         logger.info() << "Media playback Finished";
         }).detach();
 }

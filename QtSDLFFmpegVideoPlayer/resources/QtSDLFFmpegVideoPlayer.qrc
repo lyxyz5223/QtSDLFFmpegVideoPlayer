@@ -1,4 +1,33 @@
 <RCC>
-    <qresource prefix="QtSDLFFmpegVideoPlayer">
-    </qresource>
+  <qresource prefix="svgs">
+    <file>svgs/arrow-down.svg</file>
+    <file>svgs/arrow-down-bottom.svg</file>
+    <file>svgs/arrow-left.svg</file>
+    <file>svgs/arrow-right.svg</file>
+    <file>svgs/arrow-separate.svg</file>
+    <file>svgs/arrow-separate-vertical.svg</file>
+    <file>svgs/arrow-union.svg</file>
+    <file>svgs/arrow-union-vertical.svg</file>
+    <file>svgs/arrow-up.svg</file>
+    <file>svgs/arrow-up-top.svg</file>
+    <file>svgs/fast-arrow-down.svg</file>
+    <file>svgs/fast-arrow-left.svg</file>
+    <file>svgs/fast-arrow-right.svg</file>
+    <file>svgs/fast-arrow-up.svg</file>
+    <file>svgs/nav-arrow-down.svg</file>
+    <file>svgs/nav-arrow-down-solid.svg</file>
+    <file>svgs/nav-arrow-left.svg</file>
+    <file>svgs/nav-arrow-left-solid.svg</file>
+    <file>svgs/nav-arrow-right.svg</file>
+    <file>svgs/nav-arrow-right-solid.svg</file>
+    <file>svgs/nav-arrow-up.svg</file>
+    <file>svgs/nav-arrow-up-solid.svg</file>
+    <file>svgs/settings.svg</file>
+    <file>svgs/sort.svg</file>
+    <file>svgs/sort-down.svg</file>
+    <file>svgs/sort-up.svg</file>
+  </qresource>
+  <qresource prefix="main">
+    <file>QtSDLFFmpegVideoPlayer.ico</file>
+  </qresource>
 </RCC>

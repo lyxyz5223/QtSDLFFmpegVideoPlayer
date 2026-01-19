@@ -201,6 +201,17 @@
       </widget>
      </item>
      <item>
+      <widget class="QPushButton" name="btnSortItems">
+       <property name="text">
+        <string/>
+       </property>
+       <property name="icon">
+        <iconset resource="../resources/QtSDLFFmpegVideoPlayer.qrc">
+         <normaloff>:/svgs/svgs/sort.svg</normaloff>:/svgs/svgs/sort.svg</iconset>
+       </property>
+      </widget>
+     </item>
+     <item>
       <spacer name="horizontalSpacer">
        <property name="orientation">
         <enum>Qt::Orientation::Horizontal</enum>
@@ -212,6 +223,50 @@
         </size>
        </property>
       </spacer>
+     </item>
+     <item>
+      <widget class="QPushButton" name="btnMoveItemUpToTop">
+       <property name="text">
+        <string/>
+       </property>
+       <property name="icon">
+        <iconset resource="../resources/QtSDLFFmpegVideoPlayer.qrc">
+         <normaloff>:/svgs/svgs/arrow-up-top.svg</normaloff>:/svgs/svgs/arrow-up-top.svg</iconset>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="btnMoveItemUp">
+       <property name="text">
+        <string/>
+       </property>
+       <property name="icon">
+        <iconset resource="../resources/QtSDLFFmpegVideoPlayer.qrc">
+         <normaloff>:/svgs/svgs/arrow-up.svg</normaloff>:/svgs/svgs/arrow-up.svg</iconset>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="btnMoveItemDown">
+       <property name="text">
+        <string/>
+       </property>
+       <property name="icon">
+        <iconset resource="../resources/QtSDLFFmpegVideoPlayer.qrc">
+         <normaloff>:/svgs/svgs/arrow-down.svg</normaloff>:/svgs/svgs/arrow-down.svg</iconset>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="btnMoveItemDownToBottom">
+       <property name="text">
+        <string/>
+       </property>
+       <property name="icon">
+        <iconset resource="../resources/QtSDLFFmpegVideoPlayer.qrc">
+         <normaloff>:/svgs/svgs/arrow-down-bottom.svg</normaloff>:/svgs/svgs/arrow-down-bottom.svg</iconset>
+       </property>
+      </widget>
      </item>
     </layout>
    </item>
@@ -227,7 +282,9 @@
    </slots>
   </customwidget>
  </customwidgets>
- <resources/>
+ <resources>
+  <include location="../resources/QtSDLFFmpegVideoPlayer.qrc"/>
+ </resources>
  <connections>
   <connection>
    <sender>btnRemoveItem</sender>
@@ -389,6 +446,86 @@
     </hint>
    </hints>
   </connection>
+  <connection>
+   <sender>btnMoveItemUpToTop</sender>
+   <signal>clicked()</signal>
+   <receiver>PlayListWidgetClass</receiver>
+   <slot>moveItemUpToTop()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>186</x>
+     <y>356</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>163</x>
+     <y>365</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnMoveItemUp</sender>
+   <signal>clicked()</signal>
+   <receiver>PlayListWidgetClass</receiver>
+   <slot>moveItemUp()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>212</x>
+     <y>355</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>211</x>
+     <y>367</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnMoveItemDown</sender>
+   <signal>clicked()</signal>
+   <receiver>PlayListWidgetClass</receiver>
+   <slot>moveItemDown()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>246</x>
+     <y>352</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>241</x>
+     <y>366</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnMoveItemDownToBottom</sender>
+   <signal>clicked()</signal>
+   <receiver>PlayListWidgetClass</receiver>
+   <slot>moveItemDownToBottom()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>275</x>
+     <y>349</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>264</x>
+     <y>365</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnSortItems</sender>
+   <signal>clicked()</signal>
+   <receiver>PlayListWidgetClass</receiver>
+   <slot>sortItems()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>105</x>
+     <y>360</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>106</x>
+     <y>366</y>
+    </hint>
+   </hints>
+  </connection>
  </connections>
  <slots>
   <slot>appendFiles()</slot>
@@ -399,5 +536,10 @@
   <slot>itemActivated(QModelIndex)</slot>
   <slot>itemClicked(QModelIndex)</slot>
   <slot>itemDoubleClicked(QModelIndex)</slot>
+  <slot>moveItemUp()</slot>
+  <slot>moveItemUpToTop()</slot>
+  <slot>moveItemDown()</slot>
+  <slot>moveItemDownToBottom()</slot>
+  <slot>sortItems()</slot>
  </slots>
 </ui>

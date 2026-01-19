@@ -3,23 +3,15 @@
 #include <qicon.h>
 #include <QStyledItemDelegate.h>
 #include <QAbstractListModel>
-
+#include <QFileInfo>
 
 struct PlayListItem
 {
     QString url;
     QString title;
-    PlayListItem() {}
-    //explicit PlayListItem(const QString& url) : url(url) {} // 显式构造
-    explicit PlayListItem(const QString& url, const QString& title) : url(url), title(title) {}
-    void updateIcon();
-    bool isNull() const {
-        return url.isEmpty();
-    }
-    QIcon getIcon() const {
-        return icon;
-    }
+    size_t duration = 0;
 private:
+    QFileInfo fileInfo;
     QIcon icon;
     bool playing = false;
     QColor fontColor{ Qt::black };
@@ -27,6 +19,49 @@ private:
     friend class PlayListListViewItemDelegate;
     friend QDataStream& operator<<(QDataStream& out, const PlayListItem& item);
     friend QDataStream& operator>>(QDataStream& in, PlayListItem& item);
+    PlayListItem& copy(const PlayListItem& other) {
+        if (this == &other)
+            return *this;
+        this->url = other.url;
+        this->title = other.title;
+        this->fileInfo = other.fileInfo;
+        this->icon = other.icon;
+        this->playing = other.playing;
+        this->fontColor = other.fontColor;
+        return *this;
+    }
+
+public:
+    PlayListItem() {}
+    //explicit PlayListItem(const QString& url) : url(url) {} // 显式构造
+    explicit PlayListItem(const QString& url) : url(url), fileInfo(url) {
+        updateIcon();
+        updateMediaMetaData();
+    }
+    PlayListItem(const PlayListItem& other) {
+        copy(other);
+    }
+    ~PlayListItem() {}
+    explicit PlayListItem(PlayListItem&& other) noexcept
+        : fileInfo(std::move(other.fileInfo)),
+          icon(std::move(other.icon)),
+          playing(other.playing),
+          fontColor(std::move(other.fontColor)),
+          url(std::move(other.url)),
+          title(std::move(other.title))
+    {
+    }
+    PlayListItem& operator=(const PlayListItem& other) {
+        return copy(other);
+    }
+    void updateIcon();
+    void updateMediaMetaData();
+    bool isNull() const {
+        return url.isEmpty();
+    }
+    QIcon getIcon() const {
+        return icon;
+    }
 };
 
 // 元类型声明，注册PlayListItem到Qt元对象系统，并注册类型id
@@ -47,6 +82,8 @@ inline QDataStream& operator>>(QDataStream& in, PlayListItem& item) // 反序列
     in >> item.url;
     in >> item.title;
     // 私有成员如下
+    item.fileInfo = QFileInfo(item.url); // 重新构造fileInfo
+    item.updateIcon(); // 更新图标
     // icon成员不进行序列化
     in >> item.playing;
     in >> item.fontColor;
@@ -146,6 +183,16 @@ public:
         }
         return -1;
     }
+
+    enum SortWay {
+        ByTitle,
+        ByDuration,
+        ByFileName,
+        ByUrl,
+        ByFileSize,
+        ByRandom
+    };
+    void sort(SortWay way, Qt::SortOrder order = Qt::AscendingOrder);
 
 private:
     QList<PlayListItem> m_items;

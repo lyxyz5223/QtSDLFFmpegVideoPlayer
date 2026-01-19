@@ -291,6 +291,9 @@ void VideoPlayer::renderVideo()
     frameCtx.codecCtx = playbackStateVariables.codecCtx.get();
     frameCtx.streamIndex = playbackStateVariables.streamIndex;
 
+    //auto maxVideoFrameQueueSize = MAX_VIDEO_FRAME_QUEUE_SIZE;
+    //if (> maxVideoFrameQueueSize)
+    //    maxVideoFrameQueueSize = playbackStateVariables.codecCtx->;
     // 视频渲染循环
     while (true)
     {
@@ -505,7 +508,7 @@ void VideoPlayer::renderVideo()
                     logger.trace("Video sleep: {} ms", sleepTime);
                     ThreadSleepMs(sleepTime); // 后续可以替换为可打断的睡眠，防止睡眠时间过长导致收不到阻塞/退出信号
                 }
-                else if (sleepTime < -1000) // 超过1s就跳帧
+                else if (sleepTime < -300) // 超过x ms就跳帧
                 {
                     // 落后太多，跳过帧
                     logger.trace("Video drop frame to catch up: {} ms", -sleepTime);

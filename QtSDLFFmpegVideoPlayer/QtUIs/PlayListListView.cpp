@@ -31,6 +31,11 @@ void PlayListItem::updateIcon()
     icon = fileIcon;
 }
 
+void PlayListItem::updateMediaMetaData()
+{
+    title = fileInfo.completeBaseName();
+}
+
 int PlayListItemListModel::rowCount(const QModelIndex& parent) const
 {
     if (parent.isValid())
@@ -101,7 +106,6 @@ bool PlayListItemListModel::setData(const QModelIndex& index, const PlayListItem
     if (index.isValid() && index.row() < m_items.size() && (role == Qt::EditRole || role == Qt::DisplayRole))
     {
         PlayListItem item = value;
-        item.updateIcon();
         m_items.replace(index.row(), item);
         emit dataChanged(index, index, { Qt::DisplayRole | Qt::EditRole });
         return true;
@@ -192,7 +196,7 @@ bool PlayListItemListModel::insertItem(int row, const PlayListItem& item)
 bool PlayListItemListModel::insertFile(int row, const QString& url)
 {
     QFileInfo fileInfo(url);
-    PlayListItem item{ fileInfo.absoluteFilePath(), fileInfo.fileName() };
+    PlayListItem item{ fileInfo.absoluteFilePath() };
     return insertItem(row, item);
 }
 
@@ -273,6 +277,11 @@ bool PlayListItemListModel::dropMimeData(const QMimeData* data, Qt::DropAction a
 QStringList PlayListItemListModel::mimeTypes() const
 {
     return m_mimeTypes;
+}
+
+void PlayListItemListModel::sort(SortWay way, Qt::SortOrder order)
+{
+
 }
 
 // copy from QAbstractItemModel::encodeData

@@ -85,6 +85,11 @@ public:
     // AVFilterGraph智能指针删除器
     static AVFilterGraphConstDeleter constDeleterAVFilterGraph;
 
+    //inline constexpr static auto ThreadSleepMs = [] (size_t duration) {
+    //    auto to = std::chrono::steady_clock::now() + std::chrono::milliseconds(duration);
+    //    while (std::chrono::steady_clock::now() < to)
+    //        std::this_thread::yield();  // 让出CPU时间片，降低资源占用
+    //};
     inline constexpr static auto ThreadSleepMs = SleepForMs;
     inline constexpr static auto ThreadYield = std::this_thread::yield;
 

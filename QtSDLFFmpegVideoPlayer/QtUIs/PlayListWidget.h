@@ -72,6 +72,14 @@ private slots:
     void itemClicked(const QModelIndex& index);
     void itemDoubleClicked(const QModelIndex& index);
 
+    void moveItemUpToTop();
+    void moveItemUp();
+    void moveItemDown();
+    void moveItemDownToBottom();
+
+    void sortItems();
+    
+
 private:
     Ui_PlayListWidgetClass ui;
 
@@ -80,6 +88,8 @@ private:
     QStringList listFilesInFolder(const QString& folderPath);
     void updateUISearchTotalNumberLabel();
     void updateUISearchFoundNumberLabel(qsizetype foundNumber);
-
+    // offset: 正数表示下移，负数表示上移
+    // most: 是否移动到最顶端/最底端，会根据offset的正负决定方向
+    void moveItems(int64_t offset, bool most = false);
 };
 

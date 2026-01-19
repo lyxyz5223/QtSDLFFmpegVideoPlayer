@@ -39,6 +39,9 @@
     <Filter Include="QtUIs\SDLs">
       <UniqueIdentifier>{b3c322d0-b4d7-48e8-972f-f8dc09c39fd0}</UniqueIdentifier>
     </Filter>
+    <Filter Include="QtUtils">
+      <UniqueIdentifier>{67d75128-b055-42bb-b2ff-10e0465a3280}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -79,6 +82,18 @@
     </ClCompile>
     <ClCompile Include="QtUIs\PlayListListView.cpp">
       <Filter>QtUIs</Filter>
+    </ClCompile>
+    <ClCompile Include="QtUIs\AnimatedMenuAction.cpp">
+      <Filter>QtUIs</Filter>
+    </ClCompile>
+    <ClCompile Include="QtUIs\AnimatedMenu.cpp">
+      <Filter>QtUIs</Filter>
+    </ClCompile>
+    <ClCompile Include="QtUIs\PlayOptionsWidget.cpp">
+      <Filter>QtUIs</Filter>
+    </ClCompile>
+    <ClCompile Include="QtUtils\QtMediaPlayer.cpp">
+      <Filter>QtUtils</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -124,6 +139,12 @@
     <ClInclude Include="QtUIs\SDLWidget.h">
       <Filter>QtUIs\SDLs</Filter>
     </ClInclude>
+    <ClInclude Include="QtUIs\AnimatedMenu.h">
+      <Filter>QtUIs</Filter>
+    </ClInclude>
+    <ClInclude Include="QtUtils\QtMediaPlayer.h">
+      <Filter>QtUtils</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="QtUIs\QtSDLFFmpegVideoPlayer.h">
@@ -138,12 +159,21 @@
     <QtMoc Include="QtUIs\PlayListListView.h">
       <Filter>QtUIs</Filter>
     </QtMoc>
+    <QtMoc Include="QtUIs\AnimatedMenuAction.h">
+      <Filter>QtUIs</Filter>
+    </QtMoc>
+    <QtMoc Include="QtUIs\PlayOptionsWidget.h">
+      <Filter>QtUIs</Filter>
+    </QtMoc>
   </ItemGroup>
   <ItemGroup>
     <QtUic Include="QtUIs\QtSDLFFmpegVideoPlayer.ui">
       <Filter>QtUIs\Form Files</Filter>
     </QtUic>
     <QtUic Include="QtUIs\PlayListWidget.ui">
+      <Filter>QtUIs\Form Files</Filter>
+    </QtUic>
+    <QtUic Include="QtUIs\PlayOptionsWidget.ui">
       <Filter>QtUIs\Form Files</Filter>
     </QtUic>
   </ItemGroup>

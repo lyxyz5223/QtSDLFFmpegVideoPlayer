@@ -165,7 +165,7 @@ private:
     Logger logger{ loggerName, loggerSinks };
 //protected:
     Mutex singlePlaybackMtx; // 单次播放互斥锁
-    AtomicBool isPlayingFlag{ false }; // 是否正在播放标志
+    AtomicWaitObject<bool> isPlayingFlag{ false }; // 是否正在播放标志
 
     std::string filePath;
     Atomic<AVSyncMode> avSyncMode{ AVSyncMode::VideoSyncToAudio };
@@ -325,7 +325,12 @@ private:
         if (requestTaskQueueHandlerMode == ComponentWorkMode::External)
             requestTaskQueueHandler->waitStop();
     }
-
+    void cleanUpPlayer() {
+        audioClock.store(0);
+        isAudioClockStable.store(false);
+        playerState.set(PlayerState::Stopped);
+    }
+    
     bool shouldStop() const {
         auto s = getPlayerState();
         if (s == PlayerState::Stopped || s == PlayerState::Stopping)
@@ -347,35 +352,37 @@ public:
     // 若decodeType为VideoDecodeType::Unset，则不改变enableHardwareDecoding设置的值
     bool play(const std::string& filePath, const MediaPlayOptions& options) {
         std::unique_lock lockSinglePlaybackMtx(singlePlaybackMtx);
-        if (isPlayingFlag.load())
+        if (isPlayingFlag.get())
             return false; // 已经在播放中
-        isPlayingFlag.store(true);
+        isPlayingFlag.setAndNotifyAll(true);
         lockSinglePlaybackMtx.unlock();
         this->setFilePath(filePath);
         if (!prepareToPlay())
         {
-            isPlayingFlag.store(false); // 重置状态
+            isPlayingFlag.setAndNotifyAll(false); // 重置状态
             return false;
         }
         bool rst = playMediaFile(options);
+        cleanUpPlayer();
         lockSinglePlaybackMtx.lock();
-        isPlayingFlag.store(false);
+        isPlayingFlag.setAndNotifyAll(false);
         return rst;
     }
     virtual bool play() override {
         std::unique_lock lockSinglePlaybackMtx(singlePlaybackMtx);
-        if (isPlayingFlag.load())
+        if (isPlayingFlag.get())
             return false; // 已经在播放中
-        isPlayingFlag.store(true);
+        isPlayingFlag.setAndNotifyAll(true);
         lockSinglePlaybackMtx.unlock();
         if (!prepareToPlay())
         {
-            isPlayingFlag.store(false); // 重置状态
+            isPlayingFlag.setAndNotifyAll(false); // 重置状态
             return false;
         }
         bool rst = playMediaFile();
+        cleanUpPlayer();
         lockSinglePlaybackMtx.lock();
-        isPlayingFlag.store(false);
+        isPlayingFlag.setAndNotifyAll(false);
         return rst;
     }
     virtual void resume() override {
@@ -397,6 +404,7 @@ public:
         execPlayerWithThreads({ [&] { videoPlayer->stop(); }, [&] { audioPlayer->stop(); } });
         if (requestTaskQueueHandlerMode == ComponentWorkMode::External)
             requestTaskQueueHandler->stop();
+        isPlayingFlag.wait(false);
     }
 
 
@@ -442,13 +450,13 @@ public:
     }
 
     virtual bool isPlaying() const override {
-        return audioPlayer->isPlaying() && videoPlayer->isPlaying() && isPlayingFlag.load();
+        return audioPlayer->isPlaying() && videoPlayer->isPlaying() && isPlayingFlag.get();
     }
     virtual bool isPaused() const override {
-        return audioPlayer->isPaused() && videoPlayer->isPaused() && isPlayingFlag.load();
+        return audioPlayer->isPaused() && videoPlayer->isPaused() && isPlayingFlag.get();
     }
     virtual bool isStopped() const override {
-        return audioPlayer->isStopped() && videoPlayer->isStopped() && !isPlayingFlag.load();
+        return audioPlayer->isStopped() && videoPlayer->isStopped() && !isPlayingFlag.get();
     }
     virtual PlayerState getPlayerState() const override {
         PlayerState vs = videoPlayer->getPlayerState();
