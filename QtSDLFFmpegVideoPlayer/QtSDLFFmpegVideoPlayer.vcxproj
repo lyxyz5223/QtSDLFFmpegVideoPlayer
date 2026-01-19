@@ -66,6 +66,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
     <IncludePath>.\Utils;.\Players;.\SDLUtils;.\AudioAdapter;.\QtUtils;$(IncludePath)</IncludePath>
     <LibraryPath>$(LibraryPath)</LibraryPath>
+    <CopyCppRuntimeToOutputDir>true</CopyCppRuntimeToOutputDir>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Link>
@@ -151,6 +152,7 @@
     <QtMoc Include="QtUIs\PlayOptionsWidget.h" />
     <ClInclude Include="QtUIs\SDLWidget.h" />
     <ClInclude Include="QtUtils\QtMediaPlayer.h" />
+    <ClInclude Include="resource.h" />
     <ClInclude Include="SDLUtils\SDLApp.h" />
     <ClInclude Include="SDLUtils\SDLMediaPlayer.h" />
     <ClInclude Include="Utils\AtomicWaitObject.h" />
@@ -172,7 +174,7 @@
     <QtRcc Include="resources\QtSDLFFmpegVideoPlayer.qrc" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="resources\QtSDLFFmpegVideoPlayer.rc" />
+    <ResourceCompile Include="QtSDLFFmpegVideoPlayer.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Condition="Exists('$(QtMsBuild)\qt.targets')">
