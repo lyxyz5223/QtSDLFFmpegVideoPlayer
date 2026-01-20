@@ -86,6 +86,8 @@ QVariant PlayListItemListModel::data(const QModelIndex& index, int role) const
 
 bool PlayListItemListModel::setData(const QModelIndex& index, const QVariant& value, int role)
 {
+    if (index.row() < 0)
+        return false;
     if (role == Qt::EditRole || role == Qt::DisplayRole)
         return setData(index, value.value<PlayListItem>(), role);
     else if (role == Qt::ForegroundRole)

@@ -73,7 +73,7 @@ bool QtSDLFFmpegVideoPlayer::nativeEvent(const QByteArray & eventType, void* mes
 
 void QtSDLFFmpegVideoPlayer::closeEvent(QCloseEvent* e)
 {
-    mediaPlayer.stop();
+    playerStop();
     sdlEventTimer->stop();
     sdlEventTimer->disconnect();
     sdlEventTimer->deleteLater();
@@ -137,7 +137,7 @@ void QtSDLFFmpegVideoPlayer::mediaPlayPause()
 
 void QtSDLFFmpegVideoPlayer::mediaStop()
 {
-    mediaPlayer.stop();
+    playerStop();
 }
 
 void QtSDLFFmpegVideoPlayer::mediaPrevious()
@@ -222,18 +222,18 @@ void QtSDLFFmpegVideoPlayer::beforePlaybackCallback(const AVFormatContext* forma
 {
     this->duration = calcMsFromAVDuration(formatCtx->duration); // 转换为毫秒
     logger.info() << "Media Duration (ms):" << this->duration;
-    auto updateUI = [this] {
+    QString elidedMediaName = getElidedString(ui.playListDockWidgetContents->getPlayListItem(ui.playListDockWidgetContents->getCurrentPlayingIndex()).title, ui.labelMediaName->width(), ui.labelMediaName->font()); // 设置媒体名称显示
+    auto updateUI = [this, elidedMediaName] {
         ui.sliderMediaProgress->setRange(0, this->duration); // 设置滑块范围
         ui.sliderMediaProgress->setValue(0); // 重置进度条
         ui.labelMediaCurrentTime->setText(msToQString(0));// 重置当前时间显示
         ui.labelMediaDuration->setText(msToQString(this->duration));// 设置总时间显示
-        QString elidedMediaName = getElidedString(ui.playListDockWidgetContents->getPlayListItem(ui.playListDockWidgetContents->getCurrentPlayingIndex()).title, ui.labelMediaName->width(), ui.labelMediaName->font()); // 设置媒体名称显示
         ui.labelMediaName->setText(elidedMediaName);
     };
     if (QThread::currentThread() == QApplication::instance()->thread())
         updateUI();
     else
-        QMetaObject::invokeMethod(this, updateUI, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(this, updateUI/*, Qt::QueuedConnection*/);
 }
 void QtSDLFFmpegVideoPlayer::videoRenderCallback(const MediaPlayer::VideoFrameContext& frameCtx)
 {
@@ -299,6 +299,12 @@ void QtSDLFFmpegVideoPlayer::playerPlay(QString filePath)
 #endif
         logger.info() << "Media playback Finished";
         }).detach();
+}
+
+void QtSDLFFmpegVideoPlayer::playerStop()
+{
+    ui.playListDockWidgetContents->setCurrentPlayingIndex(-1); // 清除播放状态
+    mediaPlayer.stop();
 }
 
 void QtSDLFFmpegVideoPlayer::playerPlayByPlayListIndex(qsizetype index)

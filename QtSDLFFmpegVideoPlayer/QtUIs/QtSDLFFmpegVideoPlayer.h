@@ -39,6 +39,7 @@ class QtSDLFFmpegVideoPlayer : public QMainWindow
     class QtSDLMediaPlayer : public TargetMediaPlayer {
         QtSDLFFmpegVideoPlayer& owner;
         AtomicBool inited = false;
+        AtomicBool stopped = true;
         AtomicInt seekingCount{ 0 };
 
     public:
@@ -46,6 +47,7 @@ class QtSDLFFmpegVideoPlayer : public QMainWindow
         // 重写事件处理函数
         virtual void stopEvent(MediaPlaybackStateChangeEvent* e) override {
             TargetMediaPlayer::stopEvent(e);
+            stopped.store(true);
             inited.store(false); // 重置初始化状态
             owner.afterPlaybackCallback();
             owner.setPlayPauseButtonState(false);
@@ -61,6 +63,7 @@ class QtSDLFFmpegVideoPlayer : public QMainWindow
         virtual void startEvent(MediaPlaybackStateChangeEvent* e) override {
             TargetMediaPlayer::startEvent(e);
             inited.store(false); // 重置初始化状态
+            stopped.store(false);
             owner.setPlayPauseButtonState(true);
         }
         virtual void seekEvent(MediaSeekEvent* e) override {
@@ -84,26 +87,30 @@ class QtSDLFFmpegVideoPlayer : public QMainWindow
         }
         virtual void videoRenderEvent(VideoRenderEvent* e) override {
             TargetMediaPlayer::videoRenderEvent(e);
-            if (seekingCount.load() != 0)
+            if (stopped.load() || seekingCount.load() != 0)
                 return;
             auto ctx = e->frameContext();
             if (!inited.load())
             {
-                owner.beforePlaybackCallback(ctx->formatCtx, ctx->codecCtx);
+                if (stopped.load())
+                    return;
                 inited.store(true);
+                owner.beforePlaybackCallback(ctx->formatCtx, ctx->codecCtx);
             }
             // 转发渲染事件
             owner.videoRenderCallback(*ctx);
         }
         virtual void audioRenderEvent(AudioRenderEvent* e) override {
             TargetMediaPlayer::audioRenderEvent(e);
-            if (seekingCount.load() != 0)
+            if (stopped.load() || seekingCount.load() != 0)
                 return;
             auto ctx = e->frameContext();
             if (!inited.load())
             {
-                owner.beforePlaybackCallback(ctx->formatCtx, ctx->codecCtx);
+                if (stopped.load())
+                    return;
                 inited.store(true);
+                owner.beforePlaybackCallback(ctx->formatCtx, ctx->codecCtx);
             }
             // 转发渲染事件
             owner.audioRenderCallback(*ctx);
@@ -273,6 +280,8 @@ private:
     // 播放指定文件
     // 此函数为异步函数，调用后立即返回，播放在另一个线程中进行，且会自动停止之前的播放
     void playerPlay(QString filePath);
+
+    void playerStop();
 
     // 播放播放列表中指定索引的文件
     // 此函数会自动设置播放列表中的当前播放索引
