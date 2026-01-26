@@ -7,6 +7,10 @@
 #include <QMimeData>
 #include <QBitArray>
 #include <QMouseEvent>
+#include <random>
+#include <unordered_set>
+
+#include "PlayerPredefine.h"
 
 #define APP_PLAYLIST_MIMETYPE_INDEX 0
 #define FILE_URI_LIST_MIMETYPE_INDEX 1
@@ -33,7 +37,22 @@ void PlayListItem::updateIcon()
 
 void PlayListItem::updateMediaMetaData()
 {
-    title = fileInfo.completeBaseName();
+    AVFormatContext* fmtCtx = nullptr;
+    bool rst = MediaDecodeUtils::openFile(nullptr, fmtCtx, fileInfo.absoluteFilePath().toStdString());
+    if (rst)
+    {
+        for (const AVDictionaryEntry* lastPair = nullptr, *pair = nullptr;pair = av_dict_iterate(fmtCtx->metadata, lastPair); lastPair = pair)
+        {
+            if (strcmp(pair->key, "title") == 0)
+                this->title = pair->value;
+            else if (strcmp(pair->key, "artist") == 0)
+                this->artist = pair->value;
+
+        }
+        if (MediaDecodeUtils::findStreamInfo(nullptr, fmtCtx))
+            this->duration = ((fmtCtx->duration > 0) ? fmtCtx->duration / AV_TIME_BASE : 0);
+        MediaDecodeUtils::closeFile(nullptr, fmtCtx);
+    }
 }
 
 int PlayListItemListModel::rowCount(const QModelIndex& parent) const
@@ -61,15 +80,16 @@ QVariant PlayListItemListModel::data(const QModelIndex& index, int role) const
     case Qt::DisplayRole: // 主要显示文本
     case Qt::EditRole: // 编辑时的文本（通常和 DisplayRole 相同）
         return QVariant::fromValue(item);
-        return item.title;
+        return item.fileInfo.fileName();
     case Qt::ToolTipRole: // 鼠标悬停提示
-        return tr("标题: %1\n来源: %2")
+        return tr("标题: %1\n文件名: %2\n来源: %3")
             .arg(item.title)
+            .arg(item.fileInfo.fileName())
             .arg(item.url);
     case Qt::StatusTipRole: // 状态栏提示（可选）
         return item.title;
     case Qt::WhatsThisRole: // "这是什么"帮助文本（可选）
-        return tr("播放列表项目: ") + item.title;
+        return tr("播放列表项目: ") + item.fileInfo.fileName();
     case Qt::CheckStateRole: // 复选框状态（如果有）
         return QVariant();
     case Qt::ForegroundRole: // 前景色（文本颜色）
@@ -283,7 +303,31 @@ QStringList PlayListItemListModel::mimeTypes() const
 
 void PlayListItemListModel::sort(SortWay way, Qt::SortOrder order)
 {
-
+    beginResetModel();
+    if (way == SortWay::ByRandom)
+        sortByRandom();
+    else
+        std::sort(m_items.begin(), m_items.end(), [&](const PlayListItem& a, const PlayListItem& b) {
+            switch (way)
+            {
+            case PlayListItemListModel::ByTitle:
+                return sortComparator(a.title, b.title, order);
+            case PlayListItemListModel::ByDuration:
+                return sortComparator(a.duration, b.duration, order);
+            case PlayListItemListModel::ByFileName:
+                return sortComparator(a.fileInfo.fileName(), b.fileInfo.fileName(), order);
+            case PlayListItemListModel::ByUrl:
+                return sortComparator(a.url, b.url, order);
+            case PlayListItemListModel::ByFileSize:
+                return sortComparator(a.fileInfo.size(), b.fileInfo.size(), order);
+            case PlayListItemListModel::ByRandom:
+                return sortComparatorRandom();
+            default:
+                return true;
+            }
+        });
+    // 刷新列表视图
+    endResetModel();
 }
 
 // copy from QAbstractItemModel::encodeData
@@ -478,6 +522,64 @@ bool PlayListItemListModel::externalFileDropMimeData(const QMimeData* data, cons
     return false; // 返回false，表示不进行任何操作，如移动时外部(explorer等)不自动删除源文件
 }
 
+bool PlayListItemListModel::sortComparator(const QString& a, const QString& b, Qt::SortOrder order)
+{
+    switch (order)
+    {
+    case Qt::AscendingOrder: // 升序
+        if (strcmp(a.toStdString().c_str(), b.toStdString().c_str()) < 0)
+            return true;
+        return false;
+    case Qt::DescendingOrder: // 降序
+        if (strcmp(a.toStdString().c_str(), b.toStdString().c_str()) > 0)
+            return true;
+        return false;
+    default:
+        return true;
+    }
+}
+
+bool PlayListItemListModel::sortComparator(const size_t& a, const size_t& b, Qt::SortOrder order)
+{
+    switch (order)
+    {
+    case Qt::AscendingOrder: // 升序
+        if (a < b) return true;
+        return false;
+    case Qt::DescendingOrder: // 降序
+        if (a > b) return true;
+        return false;
+    default:
+        return true;
+    }
+}
+
+bool PlayListItemListModel::sortComparatorRandom()
+{
+    static std::random_device rd;
+    static std::mt19937_64 engine(rd());
+    std::uniform_int_distribution<int> dist(0, 1); // [0, 1]
+    return dist(engine);
+}
+
+void PlayListItemListModel::sortByRandom()
+{
+    static std::random_device rd;
+    static std::mt19937_64 engine(rd());
+    std::uniform_int_distribution<qsizetype> dist(0, m_items.size() - 1); // [0, m_items.size() - 1]
+    QList<PlayListItem> newList(m_items.size());
+    std::unordered_set<qsizetype> usedIndexes;
+    for (qsizetype i = 0; i < m_items.size(); ++i)
+    {
+        auto index = dist(engine);
+        while (usedIndexes.count(index))
+            index = dist(engine);
+        newList[i] = m_items[index];
+        usedIndexes.emplace(index);
+    }
+    m_items = newList;
+}
+
 void PlayListListViewItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const
 {
     QStyleOptionViewItem opt(option);
@@ -518,7 +620,7 @@ void PlayListListViewItemDelegate::paint(QPainter* painter, const QStyleOptionVi
         painter->setPen(foregroundColor);
     }
     QRect titleDrawRect = itemRect.adjusted(iconSize.width() + fontMetrics.averageCharWidth() + paddingSize, paddingSize, -paddingSize, -paddingSize);
-    QString titleDrawText = fontMetrics.elidedText(item.title, Qt::ElideRight, titleDrawRect.width());
+    QString titleDrawText = fontMetrics.elidedText(item.fileInfo.fileName(), Qt::ElideRight, titleDrawRect.width());
     QTextOption titleTextOption(Qt::AlignVCenter | Qt::AlignLeft);
     titleTextOption.setWrapMode(QTextOption::NoWrap);
     painter->drawText(titleDrawRect, titleDrawText, titleTextOption);

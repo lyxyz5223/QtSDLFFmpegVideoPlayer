@@ -9,7 +9,8 @@ struct PlayListItem
 {
     QString url;
     QString title;
-    size_t duration = 0;
+    QString artist;
+    size_t duration{ 0 };
 private:
     QFileInfo fileInfo;
     QIcon icon;
@@ -24,6 +25,8 @@ private:
             return *this;
         this->url = other.url;
         this->title = other.title;
+        this->artist = other.artist;
+        this->duration = other.duration;
         this->fileInfo = other.fileInfo;
         this->icon = other.icon;
         this->playing = other.playing;
@@ -48,7 +51,9 @@ public:
           playing(other.playing),
           fontColor(std::move(other.fontColor)),
           url(std::move(other.url)),
-          title(std::move(other.title))
+          title(std::move(other.title)),
+          artist(std::move(other.artist)),
+          duration(std::move(other.duration))
     {
     }
     PlayListItem& operator=(const PlayListItem& other) {
@@ -71,6 +76,8 @@ inline QDataStream& operator<<(QDataStream& out, const PlayListItem& item) // �
 {
     out << item.url;
     out << item.title;
+    out << item.artist;
+    out << item.duration;
     // 私有成员如下
     // icon成员不进行序列化
     out << item.playing;
@@ -81,6 +88,8 @@ inline QDataStream& operator>>(QDataStream& in, PlayListItem& item) // 反序列
 {
     in >> item.url;
     in >> item.title;
+    in >> item.artist;
+    in >> item.duration;
     // 私有成员如下
     item.fileInfo = QFileInfo(item.url); // 重新构造fileInfo
     item.updateIcon(); // 更新图标
@@ -210,6 +219,11 @@ private:
     bool internalDropMimeData(const QMimeData* data, const QString& format, Qt::DropAction action, int row, int column, const QModelIndex& parent);
     // 处理外部文件拖放
     bool externalFileDropMimeData(const QMimeData* data, const QString& format, Qt::DropAction action, int row, int column, const QModelIndex& parent);
+
+    static bool sortComparator(const QString& a, const QString& b, Qt::SortOrder order);
+    static bool sortComparator(const size_t& a, const size_t& b, Qt::SortOrder order);
+    static bool sortComparatorRandom();
+    void sortByRandom();
 };
 
 class PlayListListViewItemDelegate : public QStyledItemDelegate
