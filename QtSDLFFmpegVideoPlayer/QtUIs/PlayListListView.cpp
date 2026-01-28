@@ -47,7 +47,8 @@ void PlayListItem::updateMediaMetaData()
                 this->title = pair->value;
             else if (strcmp(pair->key, "artist") == 0)
                 this->artist = pair->value;
-
+            else if (strcmp(pair->key, "album") == 0)
+                this->album = pair->value;
         }
         if (MediaDecodeUtils::findStreamInfo(nullptr, fmtCtx))
             this->duration = ((fmtCtx->duration > 0) ? fmtCtx->duration / AV_TIME_BASE : 0);
@@ -82,12 +83,14 @@ QVariant PlayListItemListModel::data(const QModelIndex& index, int role) const
         return QVariant::fromValue(item);
         return item.fileInfo.fileName();
     case Qt::ToolTipRole: // 鼠标悬停提示
-        return tr("标题: %1\n文件名: %2\n来源: %3")
+        return tr("标题: %1\n艺术家: %2\n专辑: %3\n文件名: %4\n来源: %5")
             .arg(item.title)
+            .arg(item.artist)
+            .arg(item.album)
             .arg(item.fileInfo.fileName())
             .arg(item.url);
     case Qt::StatusTipRole: // 状态栏提示（可选）
-        return item.title;
+        return item.title.isEmpty() ? item.fileInfo.fileName() : tr("标题: %1，艺术家: %2，专辑: %3").arg(item.title).arg(item.artist).arg(item.album);
     case Qt::WhatsThisRole: // "这是什么"帮助文本（可选）
         return tr("播放列表项目: ") + item.fileInfo.fileName();
     case Qt::CheckStateRole: // 复选框状态（如果有）

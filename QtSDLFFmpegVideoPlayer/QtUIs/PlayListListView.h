@@ -7,9 +7,10 @@
 
 struct PlayListItem
 {
-    QString url;
-    QString title;
-    QString artist;
+    QString url; // 文件路径
+    QString title; // 标题
+    QString artist; // 艺术家
+    QString album; // 专辑
     size_t duration{ 0 };
 private:
     QFileInfo fileInfo;
@@ -26,6 +27,7 @@ private:
         this->url = other.url;
         this->title = other.title;
         this->artist = other.artist;
+        this->album = other.album;
         this->duration = other.duration;
         this->fileInfo = other.fileInfo;
         this->icon = other.icon;
@@ -53,6 +55,7 @@ public:
           url(std::move(other.url)),
           title(std::move(other.title)),
           artist(std::move(other.artist)),
+          album(std::move(other.album)),
           duration(std::move(other.duration))
     {
     }
@@ -61,6 +64,9 @@ public:
     }
     void updateIcon();
     void updateMediaMetaData();
+    const QFileInfo& getFileInfo() const {
+        return fileInfo;
+    }
     bool isNull() const {
         return url.isEmpty();
     }
@@ -77,6 +83,7 @@ inline QDataStream& operator<<(QDataStream& out, const PlayListItem& item) // �
     out << item.url;
     out << item.title;
     out << item.artist;
+    out << item.album;
     out << item.duration;
     // 私有成员如下
     // icon成员不进行序列化
@@ -89,6 +96,7 @@ inline QDataStream& operator>>(QDataStream& in, PlayListItem& item) // 反序列
     in >> item.url;
     in >> item.title;
     in >> item.artist;
+    in >> item.album;
     in >> item.duration;
     // 私有成员如下
     item.fileInfo = QFileInfo(item.url); // 重新构造fileInfo

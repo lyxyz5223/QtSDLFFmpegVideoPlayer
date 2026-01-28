@@ -130,10 +130,22 @@ void PlayListWidget::searchItems()
     for (qsizetype i = 0; i < m_playListModel->rowCount(); ++i)
     {
         QModelIndex index = m_playListModel->index(i, 0);
-        QString itemText = m_playListModel->data(index, Qt::DisplayRole).value<PlayListItem>().title;
-        bool match = regex.match(itemText).hasMatch();
+        PlayListItem&& item = m_playListModel->data(index, Qt::DisplayRole).value<PlayListItem>();
+        const QFileInfo& itemFileInfo = item.getFileInfo();
+        QStringList matchTextList{
+            itemFileInfo.fileName(), item.title, item.artist, item.album, item.url
+        };
+        bool match = false;
+        for (auto& matchText : matchTextList)
+        {
+            match = regex.match(matchText).hasMatch();
+            if (match)
+            {
+                ++foundNumber;
+                break;
+            }
+        }
         ui.listItems->setRowHidden(i, !match);
-        if (match) ++foundNumber;
     }
     updateUISearchFoundNumberLabel(foundNumber);
 }
