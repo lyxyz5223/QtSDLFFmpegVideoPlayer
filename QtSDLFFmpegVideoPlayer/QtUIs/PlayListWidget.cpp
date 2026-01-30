@@ -45,7 +45,7 @@ qsizetype PlayListWidget::getNextPlayingIndex(bool* overflow) const
 {
     auto curIdx = getCurrentPlayingIndex();
     auto playListSize = getPlayListSize();
-    if (playListSize > 0 && curIdx == playListSize - 1) // 隐含curIdx != -1
+    if (playListSize > 0 && curIdx >= playListSize - 1) // 隐含curIdx != -1
     {
         if (overflow) *overflow = true;
         curIdx = 0; // 当前是列表末尾，切换到列表开头
@@ -62,7 +62,7 @@ qsizetype PlayListWidget::getPreviousPlayingIndex(bool* overflow) const
 {
     auto curIdx = getCurrentPlayingIndex();
     auto playListSize = getPlayListSize();
-    if (playListSize > 0 && curIdx == 0) // 隐含curIdx != -1
+    if (playListSize > 0 && curIdx <= 0) // 隐含curIdx != -1
     {
         if (overflow) *overflow = true;
         curIdx = playListSize - 1; // 当前是列表开头，切换到列表末尾
