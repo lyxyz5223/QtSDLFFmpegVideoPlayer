@@ -5,6 +5,10 @@
 #include <thread>
 #include <QList>
 
+
+// Windows任务栏媒体控制集成
+#include "TaskbarMediaController.h"
+
 #ifdef USE_SDL_WIDGET
 #elif defined(USE_QT_MULTIMEDIA_WIDGET)
 #else
@@ -167,8 +171,12 @@ private:
     DefinePlayerLoggerSinks(qtSDLFFmpegVideoPlayerLoggerSinks, "QtSDLFFmpegVideoPlayer");
     Logger logger{ "QtSDLFFmpegVideoPlayer", qtSDLFFmpegVideoPlayerLoggerSinks };
 
+    TaskbarMediaController taskbarMediaController;
+
     // SDL渲染窗口
-#if defined(USE_QT_MULTIMEDIA_WIDGET)
+#ifdef USE_SDL_WIDGET
+    std::unique_ptr<VideoWidget> videoWidget{ nullptr };
+#elif defined(USE_QT_MULTIMEDIA_WIDGET)
     VideoWidget* videoWidget{ nullptr };
     QMediaPlayer* qMediaPlayer{ nullptr };
     QAudioOutput* qAudioOutput{ nullptr };
@@ -188,6 +196,7 @@ private:
     void createVideoWidget() {
 #ifdef USE_SDL_WIDGET
         videoWidget = std::make_unique<VideoWidget>((HWND)ui.videoRenderWidget->winId(), "direct3d11");
+        videoWidget->show();
 #elif defined(USE_QT_MULTIMEDIA_WIDGET)
         videoWidget = new VideoWidget(ui.videoRenderWidget);
         ui.videoRenderWidget->layout()->addWidget(videoWidget);
@@ -197,12 +206,14 @@ private:
     void destroyVideoWidget() {
     }
     void moveVideoWidget(QPoint pos) {
-#ifdef USE_QT_MULTIMEDIA_WIDGET
+#ifdef USE_SDL_WIDGET
+#elif defined(USE_QT_MULTIMEDIA_WIDGET)
         videoWidget->move(pos);
 #endif
     }
     void resizeVideoWidget(QSize size) {
-#ifdef USE_QT_MULTIMEDIA_WIDGET
+#ifdef USE_SDL_WIDGET
+#elif defined(USE_QT_MULTIMEDIA_WIDGET)
         videoWidget->resize(size);
 #endif
     }
@@ -210,9 +221,9 @@ private:
     // 设置按钮为播放或暂停状态
     void setPlayPauseButtonState(bool isPlaying) {
         if (isPlaying)
-            ui.btnPlayPause->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::MediaPlaybackPause));
+            ui.btnPlayPause->setIcon(QIcon(":/svgs/svgs/pause.svg"));
         else
-            ui.btnPlayPause->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::MediaPlaybackStart));
+            ui.btnPlayPause->setIcon(QIcon(":/svgs/svgs/play.svg"));
     }
     // 设置音量按钮为静音或非静音状态
     void setVolumeButtonState(bool isMuted, double vol = -1) {

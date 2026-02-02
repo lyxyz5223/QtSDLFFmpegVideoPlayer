@@ -18,6 +18,8 @@ bool AudioPlayer::prepareBeforePlayback()
             psv.demuxer.store(externalDemuxer.get());
         if (!psv.demuxer.load()) // 解复用器不存在，通常为外部解复用器指针为空
             throw std::runtime_error("Demuxer is nullptr.");
+        psv.demuxer.load()->setMaxPacketQueueSize(psv.demuxerStreamType, MAX_AUDIO_PACKET_QUEUE_SIZE);
+        psv.demuxer.load()->setMinPacketQueueSize(psv.demuxerStreamType, MIN_AUDIO_PACKET_QUEUE_SIZE);
         psv.formatCtx = psv.demuxer.load()->getFormatContext();
         psv.streamIndex = psv.demuxer.load()->getStreamIndex(psv.demuxerStreamType);
         psv.packetQueue = psv.demuxer.load()->getPacketQueue(psv.demuxerStreamType);
@@ -345,6 +347,12 @@ void AudioPlayer::packet2AudioStreams()
     UniquePtr<AVFrame> convertedFrame = { nullptr, constDeleterAVFrame };
     // 使用swresample进行格式转换
     SwrContext* swr = nullptr;
+    SharedPtr<FrameFilter> noneFilter = std::make_shared<FFmpegFrameDefaultFilter>(playbackStateVariables.codecCtx.get());
+    SharedPtr<FFmpegFrameVolumeFilter> volumeFilter = std::make_shared<FFmpegFrameVolumeFilter>(playbackStateVariables.codecCtx.get(), playbackStateVariables.volume);
+    UniquePtr<FFmpegFrameFilterGraph> filterGraph = std::make_unique<FFmpegFrameFilterGraph>(playbackStateVariables.codecCtx.get());
+    filterGraph->addFilter(volumeFilter);
+    filterGraph->configureFilterGraph();
+
     while (1)
     {
         if (waitObj.isBlocking())
@@ -357,9 +365,10 @@ void AudioPlayer::packet2AudioStreams()
             waitObj.pause();
             continue;
         }
-        std::unique_lock lockMtxStreamQueue(playbackStateVariables.mtxStreamQueue);
-        auto streamQueueSize = playbackStateVariables.streamQueue.size();/*getQueueSize(streamQueue)*/
-        lockMtxStreamQueue.unlock();
+        //std::unique_lock lockMtxStreamQueue(playbackStateVariables.mtxStreamQueue);
+        //auto streamQueueSize = playbackStateVariables.streamQueue.size();
+        //lockMtxStreamQueue.unlock();
+        auto streamQueueSize = getQueueSize(playbackStateVariables.streamQueue);
         if (streamQueueSize >= MAX_AUDIO_OUTPUT_STREAM_QUEUE_SIZE)
         {
             waitObj.pause();
@@ -386,11 +395,22 @@ void AudioPlayer::packet2AudioStreams()
             continue;
         while (avcodec_receive_frame(playbackStateVariables.codecCtx.get(), frame) == 0)
         {
+            SharedPtr<AVFrame> filteredFrame{ nullptr };
+            volumeFilter->setVolume(playbackStateVariables.volume);
+            if (filterGraph->isValid())
+            {
+                filteredFrame = filterGraph->filter(frame, FrameFilter::SrcFlagKeepReference, FrameFilter::SinkFlagNone);
+                if (!filteredFrame)
+                    continue; // filter失败
+            }
+            else
+                filteredFrame = noneFilter->filter(frame);
+            // 转换格式
             if (!convertedFrame)
             {
                 convertedFrame.reset(av_frame_alloc());
-                convertedFrame->sample_rate = frame->sample_rate;
-                convertedFrame->ch_layout = frame->ch_layout;
+                convertedFrame->sample_rate = filteredFrame->sample_rate;
+                convertedFrame->ch_layout = filteredFrame->ch_layout;
                 convertedFrame->format = AUDIO_OUTPUT_FORMAT;
                 convertedFrame->nb_samples = playbackStateVariables.audioOutputStreamBufferSize; // 输出固定样本数
                 int ret = av_frame_get_buffer(convertedFrame.get(), 0);
@@ -402,9 +422,9 @@ void AudioPlayer::packet2AudioStreams()
                 }
                 ret = swr_alloc_set_opts2(&swr,
                     // out
-                    &frame->ch_layout/*ch_layout*/, AUDIO_OUTPUT_FORMAT/*sample_fmt*/, frame->sample_rate, /*sample_rate*/
+                    &filteredFrame->ch_layout/*ch_layout*/, AUDIO_OUTPUT_FORMAT/*sample_fmt*/, filteredFrame->sample_rate, /*sample_rate*/
                     // in
-                    &frame->ch_layout/*ch_layout*/, (AVSampleFormat)frame->format/*sample_fmt*/, frame->sample_rate, /*sample_rate*/
+                    &filteredFrame->ch_layout/*ch_layout*/, (AVSampleFormat)filteredFrame->format/*sample_fmt*/, filteredFrame->sample_rate, /*sample_rate*/
                     0, nullptr);
                 if (ret < 0)
                 {
@@ -418,7 +438,7 @@ void AudioPlayer::packet2AudioStreams()
             if (!swr)
                 continue;
             int ret = swr_convert(swr, convertedFrame->data, convertedFrame->nb_samples,
-                (const uint8_t**)frame->data, frame->nb_samples);
+                (const uint8_t**)filteredFrame->data, filteredFrame->nb_samples);
             if (ret <= 0)
             {
                 char err[AV_ERROR_MAX_STRING_SIZE];
@@ -440,21 +460,25 @@ void AudioPlayer::packet2AudioStreams()
             // 如果是planar（平面）格式，则每个通道的数据依次排列存储，通道1：data[0]，通道2：data[1]，依此类推
             // 使用emplace减少一次vector构造拷贝
             //audioStreamQueue.emplace((signed int*)convertedFrame->data[0], (signed int*)convertedFrame->data[0] + num);
-            std::unique_lock lockMtxStreamQueue(playbackStateVariables.mtxStreamQueue);
+            
+            //std::unique_lock lockMtxStreamQueue(playbackStateVariables.mtxStreamQueue);
+            
             //auto oneSize = playbackStateVariables.numberOfAudioOutputChannels * sizeof(uint16_t);
             //size_t count = dataSize / oneSize;
             //for (size_t i = 0; i < count; ++i)
             //{
             //    AudioStreamInfo one{
             //        {},
-            //        frame->pts * timeBase
+            //        filteredFrame->pts * timeBase
             //    };
             //    for (size_t j = 0; j < oneSize; ++j)
             //        one.dataBytes.push_back(audioData[i * oneSize + j]);
             //    //enqueue(streamQueue, one);
             //    playbackStateVariables.streamQueue.emplace(one);
             //}
-            playbackStateVariables.streamQueue.emplace(std::move(vecAudioData), frame->pts, timeBaseRational, frame->pts * timeBase);
+
+            enqueue(playbackStateVariables.streamQueue, AudioStreamInfo{ std::move(vecAudioData), (uint64_t)filteredFrame->pts, timeBaseRational, filteredFrame->pts * timeBase });
+            //playbackStateVariables.streamQueue.emplace(std::move(vecAudioData), filteredFrame->pts, timeBaseRational, filteredFrame->pts * timeBase);
         }
     }
     swr_free(&swr);
@@ -486,8 +510,9 @@ AudioAdapter::AudioCallbackResult AudioPlayer::renderAudioAsyncCallback(void*& o
     std::span<uint8_t> spanOutBuffer8Bits{ reinterpret_cast<uint8_t*>(outputBuffer), spanOutBuffer.size() * AUDIO_OUTPUT_FORMAT_BYTES_PER_SAMPLE };
     auto adjustVolume = [&spanOutBuffer, &nFrames, &numberOfChannels, &userData] (double vol) {
         // 简单音量调整：线性调节
-        for (auto& sample : spanOutBuffer)
-            sample = std::round(sample * vol);
+        if (vol == 0.0)
+            for (auto& sample : spanOutBuffer)
+                sample = std::round(sample * vol);
 
         // 简单EQ音量调整
         //// 预加重系数（根据音量调整）
@@ -514,20 +539,22 @@ AudioAdapter::AudioCallbackResult AudioPlayer::renderAudioAsyncCallback(void*& o
         };
 
     uint64_t currentPts = 0;
-    std::unique_lock lockMtxStreamQueue(playbackStateVariables.mtxStreamQueue);
-    if (nFrames && isPlaying() && !playbackStateVariables.streamQueue.empty())
+    AVRational currentTimeBase = AV_TIME_BASE_Q;
+    //std::unique_lock lockMtxStreamQueue(playbackStateVariables.mtxStreamQueue);
+    AudioStreamInfo one;
+    if (nFrames && isPlaying() && tryDequeue(playbackStateVariables.streamQueue, one))
     {
-        auto& one = playbackStateVariables.streamQueue.front();
+        //auto& one = playbackStateVariables.streamQueue.front();
         // logger.info("Audio sample: {}", outBuffer[i]);
         playbackStateVariables.audioClock.store(one.frameTime); // 更新音频时钟
         auto pts = currentPts = one.pts;
-        auto timeBase = one.timeBase;
+        auto timeBase = currentTimeBase = one.timeBase;
         auto frameTime = one.frameTime;
         std::copy(one.dataBytes.begin(), one.dataBytes.end(), spanOutBuffer8Bits.data()); // std::span<uint8_t> dataBytes{};
         //std::copy(one.dataBytes.begin(), one.dataBytes.end(), outBuffer + i * oneSize); // std::vector<uint8_t> dataBytes{}
         //std::memcpy(outBuffer + i * oneSize, one.dataBytes.data(), one.dataBytes.size());
         adjustVolume((!playbackStateVariables.isMute.load()) ? playbackStateVariables.volume.load() : 0.0);
-        playbackStateVariables.streamQueue.pop();
+        //playbackStateVariables.streamQueue.pop();
 
         // 填充音频数据后调用事件回调
         FrameContext frameCtx{
@@ -572,17 +599,20 @@ AudioAdapter::AudioCallbackResult AudioPlayer::renderAudioAsyncCallback(void*& o
             {
                 // 落后太多，跳过帧
                 logger.trace("Audio drop frame to catch up: {} ms", -sleepTime);
-                while (!playbackStateVariables.streamQueue.empty() && playbackStateVariables.streamQueue.front().pts < currentPts)
-                    playbackStateVariables.streamQueue.pop();
+                //while (!playbackStateVariables.streamQueue.empty() && playbackStateVariables.streamQueue.front().pts < currentPts)
+                //    playbackStateVariables.streamQueue.pop();
             }
         }
     }
-    if (playbackStateVariables.streamQueue.size() < MIN_AUDIO_OUTPUT_STREAM_QUEUE_SIZE)
+    //if (playbackStateVariables.streamQueue.size() < MIN_AUDIO_OUTPUT_STREAM_QUEUE_SIZE)
+    if (getQueueSize(playbackStateVariables.streamQueue) < MIN_AUDIO_OUTPUT_STREAM_QUEUE_SIZE)
         playbackStateVariables.threadStateManager.wakeUpById(ThreadIdentifier::Decoder);
-    
-    //logger.info("Got audio streams, current audio stream queue size: {}", getQueueSize(streamQueue));
+    //logger.trace("Got audio streams, current audio stream queue size: {}", playbackStateVariables.streamQueue.size());
+    uint64_t currentPtsInAvTimeBase = currentTimeBase.num * currentPts * AV_TIME_BASE / currentTimeBase.den;
+    logger.trace("Current presentation timestamp: {}, duration: {}", currentPtsInAvTimeBase, playbackStateVariables.formatCtx->duration);
     if (playerState == PlayerState::Stopped || playerState == PlayerState::Stopping
-        || (playbackStateVariables.streamUploadFinished && playbackStateVariables.streamQueue.empty()/*!getQueueSize(streamQueue)*/))
+        || (currentPtsInAvTimeBase >= playbackStateVariables.formatCtx->duration && !getQueueSize(playbackStateVariables.streamQueue)))
+        //|| (currentPtsInAvTimeBase >= playbackStateVariables.formatCtx->duration && playbackStateVariables.streamQueue.empty()))
     {
         // 状态改变，播放结束
         if (playerState == PlayerState::Stopped || playerState == PlayerState::Stopping)

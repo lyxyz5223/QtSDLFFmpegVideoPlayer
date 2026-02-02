@@ -4,9 +4,10 @@
 class VideoPlayer : public PlayerInterface, private ConcurrentQueueOps
 {
 public:
+    static constexpr int MAX_VIDEO_HARDWARE_EXTRA_FRAME_SIZE = 10; // 默认池为20，这里多加10，用于硬件解码时的额外帧缓冲区大小
     // 用于视频帧队列
-    static constexpr int MAX_VIDEO_FRAME_QUEUE_SIZE = 50; // n frames
-    static constexpr int MIN_VIDEO_FRAME_QUEUE_SIZE = 20; // n frames
+    static constexpr int MAX_VIDEO_FRAME_QUEUE_SIZE = 20; // n frames
+    static constexpr int MIN_VIDEO_FRAME_QUEUE_SIZE = 15; // n frames
     // 用于ffmpeg视频解码和播放
     // 下面两个常量需同时满足，解码才会暂停
     static constexpr size_t MAX_VIDEO_PACKET_QUEUE_SIZE = 200; // 最大视频帧队列数量
@@ -55,8 +56,9 @@ public:// 这个区域用于定义公共类型
     // isClockStable 用于判断videoClock是否准确
     // sleepTime < 0 表示可能需要丢帧以追赶时钟
     // sleepTime > 0 表示可能需要睡眠以等待时钟
+    // frameShouldDrop 用于返回是否需要丢帧，true表示需要丢帧，false表示不需要丢帧
     // 返回值true && (sleepTime != 0)表示需要睡眠/丢帧，false || (sleepTime == 0)表示不需要
-    using VideoClockSyncFunction = std::function<bool(const AtomicDouble& videoClock, const AtomicBool& isClockStable, const double& videoRealtimeClock, int64_t& sleepTime)>;
+    using VideoClockSyncFunction = std::function<bool(const AtomicDouble& videoClock, const AtomicBool& isClockStable, const double& videoRealtimeClock, int64_t& sleepTime, bool& frameShouldDrop)>;
 
     enum class DecodeType {
         Unset = 0,
@@ -404,9 +406,10 @@ protected:
 
         if (playbackStateVariables.playOptions.clockSyncFunction)
         {
-            int64_t sleepTime = 0;
             playbackStateVariables.isVideoClockStable.store(isStable);
-            bool ret = playbackStateVariables.playOptions.clockSyncFunction(playbackStateVariables.videoClock, playbackStateVariables.isVideoClockStable, playbackStateVariables.realtimeClock, sleepTime);
+            int64_t sleepTime = 0;
+            bool frameShouldDrop = false;
+            bool ret = playbackStateVariables.playOptions.clockSyncFunction(playbackStateVariables.videoClock, playbackStateVariables.isVideoClockStable, playbackStateVariables.realtimeClock, sleepTime, frameShouldDrop);
             if (!ret) return 0; // 返回false表示不需要同步
             return sleepTime;
         }
@@ -490,9 +493,13 @@ private:
     
     // （如果包队列少于或等于某个最小值）通知解码器有新包到达
     void packetEnqueueCallback() { // 该函数内不能轻易使用playbackStateVariables中的packetQueue,formatCtx,streamIndex
-        if (!playbackStateVariables.demuxer.load()) return;
+        DemuxerInterface* demuxer = nullptr;
+        if (demuxerMode == ComponentWorkMode::External)
+            demuxer = externalDemuxer.get(); // 此时可用playbackStateVariablesz中的demuxer
+        else
+            demuxer = playbackStateVariables.demuxer.load(); // 此时可用playbackStateVariablesz中的demuxer
         // 解复用器每次成功入队一个包后调用该回调函数，通知解码器继续解码
-        if (getQueueSize(*playbackStateVariables.demuxer.load()->getPacketQueue(playbackStateVariables.demuxerStreamType)) <= playbackStateVariables.demuxer.load()->getMinPacketQueueSize(playbackStateVariables.demuxerStreamType))
+        if (getQueueSize(*demuxer->getPacketQueue(playbackStateVariables.demuxerStreamType)) <= demuxer->getMinPacketQueueSize(playbackStateVariables.demuxerStreamType))
             playbackStateVariables.threadStateManager.wakeUpById(ThreadIdentifier::Decoder);
     }
 

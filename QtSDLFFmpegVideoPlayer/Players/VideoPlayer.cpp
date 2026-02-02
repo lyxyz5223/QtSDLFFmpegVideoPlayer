@@ -16,8 +16,10 @@ bool VideoPlayer::prepareBeforePlayback()
         }
         else/* if (demuxerMode == DemuxerMode::External)*/
             psv.demuxer.store(externalDemuxer.get());
-        if (!psv.demuxer) // 解复用器不存在，通常为外部解复用器指针为空
+        if (!psv.demuxer.load()) // 解复用器不存在，通常为外部解复用器指针为空
             throw std::runtime_error("Demuxer is nullptr.");
+        psv.demuxer.load()->setMaxPacketQueueSize(psv.demuxerStreamType, MAX_VIDEO_PACKET_QUEUE_SIZE);
+        psv.demuxer.load()->setMinPacketQueueSize(psv.demuxerStreamType, MIN_VIDEO_PACKET_QUEUE_SIZE);
         psv.formatCtx = psv.demuxer.load()->getFormatContext();
         psv.streamIndex = psv.demuxer.load()->getStreamIndex(psv.demuxerStreamType);
         psv.packetQueue = psv.demuxer.load()->getPacketQueue(psv.demuxerStreamType);
@@ -133,7 +135,9 @@ void VideoPlayer::cleanupAfterPlayback()
 bool VideoPlayer::findAndOpenVideoDecoder()
 {
     bool useHardwareDecoding = getIsHardwareDecodingEnabled();
-    auto rst = MediaDecodeUtils::findAndOpenVideoDecoder(&logger, playbackStateVariables.formatCtx, playbackStateVariables.streamIndex, playbackStateVariables.codecCtx, useHardwareDecoding, &playbackStateVariables.hwDeviceType, &playbackStateVariables.hwPixelFormat);
+    auto rst = MediaDecodeUtils::findAndOpenVideoDecoder(&logger,
+        playbackStateVariables.formatCtx, playbackStateVariables.streamIndex, playbackStateVariables.codecCtx,
+        useHardwareDecoding, MAX_VIDEO_HARDWARE_EXTRA_FRAME_SIZE, &playbackStateVariables.hwDeviceType, &playbackStateVariables.hwPixelFormat);
     if (!useHardwareDecoding)
     {
         playbackStateVariables.hwDeviceType = AV_HWDEVICE_TYPE_NONE;
@@ -227,7 +231,13 @@ void VideoPlayer::packet2VideoFrames()
         UniquePtr<AVFrame> frame{ av_frame_alloc(), constDeleterAVFrame }; // 用于存放解码后的视频帧
         while (avcodec_receive_frame(playbackStateVariables.codecCtx.get(), frame.get()) == 0)
         {
-            enqueue(playbackStateVariables.frameQueue, av_frame_clone(frame.get())); // 放入待渲染队列
+            AVFrame* refFrame{ av_frame_alloc() };
+            if (av_frame_ref(refFrame, frame.get()) < 0)
+            {
+                av_frame_free(&refFrame);
+                continue;
+            }
+            enqueue(playbackStateVariables.frameQueue, refFrame); // 放入待渲染队列
             // 通知渲染线程继续工作
             if (getQueueSize(playbackStateVariables.frameQueue) <= MIN_VIDEO_FRAME_QUEUE_SIZE)
                 threadStateManager.wakeUpById(ThreadIdentifier::Renderer);
@@ -299,6 +309,7 @@ void VideoPlayer::renderVideo()
     {
         if (waitObj.isBlocking())
             waitObj.block();
+        std::chrono::steady_clock::time_point timeBeforeGetFrame = std::chrono::high_resolution_clock::now();
 
         if (shouldStop()) // 收到停止信号，退出循环
             break;
@@ -321,11 +332,122 @@ void VideoPlayer::renderVideo()
             rawFrame.reset(frame); // 取出队列头部元素
         }
         logger.trace("Got video frame, current video frame queue size: {}", getQueueSize(playbackStateVariables.frameQueue));
+        std::chrono::steady_clock::time_point timeBeforeTimeSync = std::chrono::high_resolution_clock::now();
 
         // 视频帧处理
-
+        videoFrame = rawFrame.get(); // 先假定使用原始解码后的帧，后面可能会转换格式
         // 判断是否为硬件解码
         bool isHardwareDecoded = (rawFrame->format == playbackStateVariables.hwPixelFormat) && (playbackStateVariables.hwPixelFormat != AV_PIX_FMT_NONE);
+        //if (!isHardwareDecoded && playbackStateVariables.hwPixelFormat != AV_PIX_FMT_NONE)
+        //{
+        //    unsigned int threadCount = std::thread::hardware_concurrency();
+        //    if (threadCount > 16)
+        //        threadCount = 16;
+        //    playbackStateVariables.codecCtx->thread_count = threadCount;
+        //    playbackStateVariables.codecCtx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
+        //    std::vector<ThreadStateManager::ThreadStateController> objs;
+        //    bool demuxerPaused = false;
+        //    threadBlocker(logger, { ThreadIdentifier::Demuxer, ThreadIdentifier::Decoder }, playbackStateVariables.threadStateManager,
+        //        playbackStateVariables.demuxer, objs, demuxerPaused);
+        //    MediaDecodeUtils::findAndOpenVideoDecoder(&logger, playbackStateVariables.formatCtx, playbackStateVariables.streamIndex,
+        //        playbackStateVariables.codecCtx, false, MAX_VIDEO_HARDWARE_EXTRA_FRAME_SIZE,
+        //        &playbackStateVariables.hwDeviceType, &playbackStateVariables.hwPixelFormat);
+        //    playbackStateVariables.hwDeviceType = AV_HWDEVICE_TYPE_NONE;
+        //    playbackStateVariables.hwPixelFormat = AV_PIX_FMT_NONE;
+        //    // 清空队列
+        //    playbackStateVariables.clearPktAndFrameQueues();
+        //    // 刷新解码器buffer
+        //    avcodec_flush_buffers(playbackStateVariables.codecCtx.get());
+        //    threadAwakener(objs, playbackStateVariables.demuxer, demuxerPaused);
+        //    continue;
+        //}
+        // 先准备时钟同步
+        if (!realtimeClockStart)
+            realtimeClockStart = av_gettime();
+        auto calcClock = [&] {
+            playbackStateVariables.realtimeClock = (av_gettime() - realtimeClockStart) / 1000000.0;
+            // 计算当前帧的时间戳
+            if (videoFrame->pts != AV_NOPTS_VALUE)
+            {
+                videoClockInside = videoFrame->pts * timeBase;
+                playbackStateVariables.videoClock.store(videoClockInside);
+            }
+            else
+            {
+                // 如果没有时间戳，使用累计时间，但是第一帧需要特殊处理
+                //if (playbackStateVariables.isVideoClockStable.load()) // 时钟稳定，正常累加，否则不予理会
+                    videoClockInside += frameDuration;
+                playbackStateVariables.videoClock.store(videoClockInside);
+            }
+            };
+        auto rollbackClock = [&] {
+            // 根据时钟同步需要，需要回退到上一帧的时间
+            if (videoClockInside > frameDuration)
+                playbackStateVariables.videoClock.store(videoClockInside - frameDuration);
+            else
+                playbackStateVariables.videoClock.store(0);
+            };
+        calcClock(); // 更新时钟
+        // Seek后进行操作需要注意特殊处理，想到两个方案
+        // 方案一：立即更新时钟+帧时间回退到上一帧，实现稳定时钟
+        if (!playbackStateVariables.isVideoClockStable.load()) // 时钟不稳定
+        {
+            //calcClock(); // 立即更新时钟
+            //rollbackClock(); // 根据时钟同步需要，需要回退到上一帧的时间
+            //videoClockIncrementer.disable(); // 禁用自动时钟计时
+            playbackStateVariables.isVideoClockStable.store(true); // 设置为稳定
+        }
+        // 方案二：暂时不更新时钟，下一帧再执行时钟同步，确保时钟最新
+        //if (!playbackStateVariables.isVideoClockStable.load()) // 时钟不稳定
+        //    playbackStateVariables.isVideoClockStable.store(true); // 设置为稳定
+        //else { /*时钟同步*/ }
+        // 音视频同步
+        if (videoClockSyncFunction)
+        {
+            int64_t sleepTime = 0;
+            bool frameShouldDrop = false;
+            bool rst = videoClockSyncFunction(playbackStateVariables.videoClock, playbackStateVariables.isVideoClockStable, playbackStateVariables.realtimeClock, sleepTime, frameShouldDrop);
+            if (rst && sleepTime != 0)
+            {
+                if (frameShouldDrop)
+                {
+                    logger.trace("Video drop frame to catch up: {} ms", -sleepTime);
+                    continue; // 丢弃当前帧，继续下一帧解码
+                }
+                //if (sleepTime > 2 * frameDuration * 1000)
+                //{
+                //    // 需要等待
+                //    logger.info("Video sleep: {} ms", sleepTime);
+                //    ThreadSleepMs(sleepTime); // 后续可以替换为可打断的睡眠，防止睡眠时间过长导致收不到阻塞/退出信号
+                //}
+                //else if (sleepTime > frameDuration * 1000)
+                //{
+                //    // 需要等待
+                //    logger.info("Video sleep: {} ms", sleepTime);
+                //    ThreadSleepMs(frameDuration * 1000); // 后续可以替换为可打断的睡眠，防止睡眠时间过长导致收不到阻塞/退出信号
+                //}
+                //else 
+                if (sleepTime > 0)
+                {
+                    // 需要等待
+                    logger.trace("Video sleep: {} ms", sleepTime);
+                    ThreadSleepMs(sleepTime); // 后续可以替换为可打断的睡眠，防止睡眠时间过长导致收不到阻塞/退出信号
+                }
+                else if (sleepTime < -300) // 超过x ms就跳帧
+                {
+                    // 落后太多，跳过帧
+                    logger.trace("Video drop frame to catch up: {} ms", -sleepTime);
+                    continue;
+                }
+                else if (sleepTime < 0)
+                {
+                    // 稍微落后，加速（不睡眠）播放，无伤大雅
+                    logger.trace("Video is slightly behind: {} ms", -sleepTime);
+                }
+            }
+        }
+        std::chrono::steady_clock::time_point timeBeforeSwitch = std::chrono::high_resolution_clock::now();
+
         // 处理解码后的视频帧
         if (isHardwareDecoded) // 使用硬件解码
         {
@@ -358,7 +480,8 @@ void VideoPlayer::renderVideo()
         }
         else // 使用软件解码
         {
-            videoFrame = rawFrame.get();
+            // 此前已经设置过了，因此此处不需要再设置为rawFrame，故注释掉
+            //videoFrame = rawFrame.get();
         }
         // 帧解析完成，更新帧上下文
         frameCtx.hwRawFrame = isHardwareDecoded ? rawFrame.get() : nullptr;
@@ -456,74 +579,17 @@ void VideoPlayer::renderVideo()
         UniquePtr<AVFrame> autoUnrefRawFrame(rawFrame.get(), [](AVFrame* frame) { if (frame) av_frame_unref(frame); });
         UniquePtr<AVFrame> autoUnrefSwFrame(swFrame.get(), [](AVFrame* frame) { if (frame) av_frame_unref(frame); });
 
-        if (!realtimeClockStart)
-            realtimeClockStart = av_gettime();
-        auto calcClock = [&] {
-            playbackStateVariables.realtimeClock = (av_gettime() - realtimeClockStart) / 1000000.0;
-            // 计算当前帧的时间戳
-            if (videoFrame->pts != AV_NOPTS_VALUE)
-            {
-                videoClockInside = videoFrame->pts * timeBase;
-                playbackStateVariables.videoClock.store(videoClockInside);
-            }
-            else
-            {
-                // 如果没有时间戳，使用累计时间，但是第一帧需要特殊处理
-                if (playbackStateVariables.isVideoClockStable.load()) // 时钟稳定，正常累加，否则不予理会
-                    videoClockInside += frameDuration;
-                playbackStateVariables.videoClock.store(videoClockInside);
-            }
-            };
-        auto rollbackClock = [&] {
-            // 根据时钟同步需要，需要回退到上一帧的时间
-            if (videoClockInside > frameDuration)
-                playbackStateVariables.videoClock.store(videoClockInside - frameDuration);
-            else
-                playbackStateVariables.videoClock.store(0);
-            };
-        calcClock(); // 更新时钟
-        // Seek后进行操作需要注意特殊处理，想到两个方案
-        // 方案一：立即更新时钟+帧时间回退到上一帧，实现稳定时钟
-        if (!playbackStateVariables.isVideoClockStable.load()) // 时钟不稳定
-        {
-            //calcClock(); // 立即更新时钟
-            //rollbackClock(); // 根据时钟同步需要，需要回退到上一帧的时间
-            //videoClockIncrementer.disable(); // 禁用自动时钟计时
-            playbackStateVariables.isVideoClockStable.store(true); // 设置为稳定
-        }
-        // 方案二：暂时不更新时钟，下一帧再执行时钟同步，确保时钟最新
-        //if (!playbackStateVariables.isVideoClockStable.load()) // 时钟不稳定
-        //    playbackStateVariables.isVideoClockStable.store(true); // 设置为稳定
-        //else { /*时钟同步*/ }
-        // 音视频同步
-        if (videoClockSyncFunction)
-        {
-            int64_t sleepTime = 0;
-            bool rst = videoClockSyncFunction(playbackStateVariables.videoClock, playbackStateVariables.isVideoClockStable, playbackStateVariables.realtimeClock, sleepTime);
-            if (rst && sleepTime != 0)
-            {
-                if (sleepTime > 0)
-                {
-                    // 需要等待
-                    logger.trace("Video sleep: {} ms", sleepTime);
-                    ThreadSleepMs(sleepTime); // 后续可以替换为可打断的睡眠，防止睡眠时间过长导致收不到阻塞/退出信号
-                }
-                else if (sleepTime < -300) // 超过x ms就跳帧
-                {
-                    // 落后太多，跳过帧
-                    logger.trace("Video drop frame to catch up: {} ms", -sleepTime);
-                    continue;
-                }
-                else if (sleepTime < 0)
-                {
-                    // 稍微落后，加速（不睡眠）播放，无伤大雅
-                    logger.trace("Video slightly faster: {} ms", -sleepTime);
-                }
-            }
-        }
         // 渲染视频帧
+        std::chrono::steady_clock::time_point timeBeforeRender = std::chrono::high_resolution_clock::now();
         if (renderer)
             renderer(frameCtx, rendererUserData);
+        std::chrono::steady_clock::time_point timeAfterRender = std::chrono::high_resolution_clock::now();
+        auto getFrameTimeInterval = timeBeforeTimeSync - timeBeforeGetFrame;
+        auto timeSyncTimeInterval = timeBeforeSwitch - timeBeforeTimeSync;
+        auto switchTimeInterval = timeBeforeRender - timeBeforeSwitch;
+        auto renderTimeInterval = timeAfterRender - timeBeforeRender;
+        auto frameRenderFullTime = getFrameTimeInterval + timeSyncTimeInterval + switchTimeInterval + renderTimeInterval;
+        logger.trace("Current frame: full time: {}, get frame time: {}, time sync time: {}, switch time: {}, render time: {}", frameRenderFullTime, getFrameTimeInterval, timeSyncTimeInterval, switchTimeInterval, renderTimeInterval);
         VideoRenderEvent videoRenderEvent{ &frameCtx };
         event(&videoRenderEvent);
     }

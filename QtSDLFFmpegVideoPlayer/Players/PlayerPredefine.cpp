@@ -233,7 +233,7 @@ bool MediaDecodeUtils::findAndOpenAudioDecoder(Logger* logger, AVFormatContext* 
     codecContext.reset(codecCtx);
     return true;
 }
-bool MediaDecodeUtils::findAndOpenVideoDecoder(Logger* logger, AVFormatContext* formatCtx, StreamIndexType streamIndex, UniquePtr<AVCodecContext>& codecContext, bool useHardwareDecoder, AVHWDeviceType* hwDeviceType, AVPixelFormat* hwPixelFormat)
+bool MediaDecodeUtils::findAndOpenVideoDecoder(Logger* logger, AVFormatContext* formatCtx, StreamIndexType streamIndex, UniquePtr<AVCodecContext>& codecContext, bool useHardwareDecoder, size_t hardwareExtraFrameCount, AVHWDeviceType* hwDeviceType, AVPixelFormat* hwPixelFormat)
 {
     if (streamIndex < 0)
     {
@@ -271,12 +271,32 @@ bool MediaDecodeUtils::findAndOpenVideoDecoder(Logger* logger, AVFormatContext* 
         if (type == AV_HWDEVICE_TYPE_NONE)
             logger->warning("Hardware decoder not supported, using software instead.");
     }
+    if (useHardwareDecoder && videoCodecCtx->hw_device_ctx)
+    {
+        if (*hwPixelFormat == AV_PIX_FMT_DXVA2_VLD)
+            videoCodecCtx->extra_hw_frames = hardwareExtraFrameCount;
+        videoCodecCtx->thread_count = 1;
+        videoCodecCtx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
+    }
+    //else
+    //{
+    //    unsigned int threadCount = std::thread::hardware_concurrency();
+    //    if (threadCount > 16)
+    //        threadCount = 16;
+    //    videoCodecCtx->thread_count = threadCount;
+    //    videoCodecCtx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
+    //}
+    unsigned int threadCount = std::thread::hardware_concurrency();
+    if (threadCount > 16)
+        threadCount = 16;
+    videoCodecCtx->thread_count = threadCount;
+    videoCodecCtx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
     if (avcodec_open2(videoCodecCtx, videoCodec, nullptr) < 0)
     {
         logger->error("Cannot open decoder");
         return false;
     }
-    codecContext.reset(uniquePtr.release()); // 先构造智能指针放入，失败时再弹出，届时自动释放上下文内存
+    codecContext.reset(uniquePtr.release());
     return true;
 }
 void MediaDecodeUtils::listAllHardwareDecoders(Logger* logger)
@@ -325,16 +345,16 @@ bool MediaDecodeUtils::initHardwareDecoder(Logger* logger, AVCodecContext* codec
     AVBufferRef* hwDeviceCtx = nullptr;
     if (av_hwdevice_ctx_create(&hwDeviceCtx, hwDeviceType, nullptr, nullptr, 0) < 0)
     {
-        logger->error("Cannot create hardware context.");
+        logger->error("Cannot create and initialize hardware context.");
         return false;
     }
-    if (av_hwdevice_ctx_init(hwDeviceCtx) < 0)
-    {
-        logger->error("Cannot initialize hardware context.");
-        if (hwDeviceCtx)
-            av_buffer_unref(&hwDeviceCtx);
-        return false;
-    }
+    //if (av_hwdevice_ctx_init(hwDeviceCtx) < 0)
+    //{
+    //    logger->error("Cannot initialize hardware context.");
+    //    if (hwDeviceCtx)
+    //        av_buffer_unref(&hwDeviceCtx);
+    //    return false;
+    //}
     codecCtx->hw_device_ctx = hwDeviceCtx; // 创建的时候自动添加了一次引用，这里只需要指针赋值，因为局部变量hwDeviceCtx不再使用
     return true;
 }
@@ -678,25 +698,27 @@ void PlayerTypes::UnifiedDemuxer::readPackets()
             continue;
         }
         bool foundStreamContext = false;
+        bool shouldPause = true;
         for (auto& [stype, sctx] : streamContexts)
         {
+            auto oldPktQueueSize = ConcurrentQueueOps::getQueueSize(sctx.packetQueue);
+            if (oldPktQueueSize < sctx.maxPacketQueueSize)
+                shouldPause = false;
             if (pkt->stream_index != sctx.index)
                 continue;
             // 找到对应流类型，放入对应队列
             foundStreamContext = true;
-            auto oldPktQueueSize = ConcurrentQueueOps::getQueueSize(sctx.packetQueue);
-            if (oldPktQueueSize >= sctx.maxPacketQueueSize)
-                threadStateController.pause(); // 暂停当前流的读取线程
             ConcurrentQueueOps::enqueue(sctx.packetQueue, pkt);
             logger.trace("Pushed audio packet, queue size: {}", oldPktQueueSize + 1);
             sctx.packetEnqueueCallback();
-            break;
         }
         if (!foundStreamContext)
         {
             av_packet_free(&pkt); // 释放不需要的包
             continue;
         }
+        if (shouldPause)
+            threadStateController.pause(); // 暂停当前流的读取线程
     }
     waitStopped.setAndNotifyAll(true);
 }
@@ -892,7 +914,414 @@ void PlayerTypes::threadAwakener(std::vector<ThreadStateManager::ThreadStateCont
 }
 
 
-void PlayerTypes::FrameVolumeFilter::filter(AVFrame* frame)
+bool PlayerTypes::FFmpegFrameFilter::initializeSrcSinkFilterCtx(AVFilterGraph* graph)
 {
-    // TODO: implement frame volume filter
+    return createSrcSinkFilterCtx(graph, this->codecCtx, this->srcFilterCtx, this->sinkFilterCtx);
 }
+
+bool PlayerTypes::FFmpegFrameFilter::createFilterGraph()
+{
+    filterGraph.reset(avfilter_graph_alloc());
+    return filterGraph.get();
+}
+
+bool PlayerTypes::FFmpegFrameFilter::configureFilterGraph()
+{
+    // 配置滤镜图
+    if (avfilter_graph_config(filterGraph.get(), nullptr) < 0)
+        return false;
+    return true;
+}
+
+
+bool PlayerTypes::FFmpegFrameFilter::createSingleFilter(FilterType type, std::string id, std::string args)
+{
+    auto ctx = createFilterContext(filterGraph.get(), type, id, args);
+    this->filterCtx = ctx;
+    return ctx;
+}
+bool PlayerTypes::FFmpegFrameFilter::createSingleFilter(std::string filterName, std::string id, std::string args)
+{
+    auto ctx = createFilterContext(filterGraph.get(), filterName, id, args);
+    this->filterCtx = ctx;
+    return ctx;
+}
+bool PlayerTypes::FFmpegFrameFilter::linkSingleFilter(AVFilterContext* filterCtx)
+{
+    // 连接滤镜
+    if (avfilter_link(this->srcFilterCtx, 0, filterCtx, 0) < 0 || avfilter_link(filterCtx, 0, this->sinkFilterCtx, 0) < 0)
+        return false;
+    return true;
+}
+bool PlayerTypes::FFmpegFrameFilter::createAndLinkSingleFilter(FilterType type, std::string id, std::string args)
+{
+    if (!inited) return false;
+    if (!createSingleFilter(type, id, args)) return false;
+    return linkSingleFilter(this->filterCtx);
+}
+bool PlayerTypes::FFmpegFrameFilter::createAndLinkSingleFilter(std::string filterName, std::string id, std::string args)
+{
+    if (!inited) return false;
+    if (!createSingleFilter(filterName, id, args)) return false;
+    return linkSingleFilter(this->filterCtx);
+}
+
+bool PlayerTypes::FFmpegFrameFilter::addFrameWithFlags(AVFrame* frame, FilterSrcFlag flags)
+{
+    return addFrameWithFlags(this->srcFilterCtx, frame, flags);
+}
+
+PlayerTypes::SharedPtr<AVFrame> PlayerTypes::FFmpegFrameFilter::getOutputFrame(FilterSinkFlag flags)
+{
+    return getOutputFrame(this->sinkFilterCtx, flags);
+}
+
+
+AVFilterContext* PlayerTypes::FFmpegFrameFilter::createFilterContext(AVFilterGraph* filterGraph, FilterType type, std::string id, std::string args)
+{
+    std::string name = getFilterNameByType(type);
+    return createFilterContext(filterGraph, name, id, args);
+}
+
+AVFilterContext* PlayerTypes::FFmpegFrameFilter::createFilterContext(AVFilterGraph* filterGraph, std::string filterName, std::string id, std::string args)
+{
+    const AVFilter* filter = avfilter_get_by_name(filterName.c_str());
+    if (!filter)
+        return nullptr;
+    // 创建滤镜
+    AVFilterContext* outFilterCtx = nullptr;
+    if (avfilter_graph_create_filter(&outFilterCtx, filter, id.c_str(), args.c_str(), nullptr, filterGraph) < 0)
+        return nullptr;
+    return outFilterCtx;
+}
+
+bool PlayerTypes::FFmpegFrameFilter::createSrcSinkFilterCtx(AVFilterGraph* graph, AVCodecContext* codecCtx, AVFilterContext*& outSrcFilterCtx, AVFilterContext*& outSinkFilterCtx)
+{
+    const AVFilter* bufferSrc = avfilter_get_by_name("abuffer");
+    if (!bufferSrc)
+        return false;
+    // 创建buffersink滤镜（输出）
+    const AVFilter* bufferSink = avfilter_get_by_name("abuffersink");
+    if (!bufferSink)
+        return false;
+
+    uint64_t channelLayoutMask = 0;
+    if (codecCtx->ch_layout.order != AV_CHANNEL_ORDER_UNSPEC)
+        channelLayoutMask = codecCtx->ch_layout.u.mask;
+    else
+    {
+        AVChannelLayout tempLayout;
+        av_channel_layout_default(&tempLayout, codecCtx->ch_layout.nb_channels);
+        channelLayoutMask = tempLayout.u.mask;
+    }
+    std::string bufferSrcFilterArguments = LoggerFormatNS::format(
+        "time_base={}/{}:sample_rate={}:sample_fmt={}:channel_layout=0x{:X}", // 0x{:X}格式化为大写的十六进制
+        1, codecCtx->sample_rate, // 1/sample_rate
+        codecCtx->sample_rate, av_get_sample_fmt_name(codecCtx->sample_fmt),
+        channelLayoutMask);
+    AVFilterContext* srcFilterCtx = nullptr;
+    outSrcFilterCtx = nullptr;
+    if (avfilter_graph_create_filter(&srcFilterCtx, bufferSrc, "in", bufferSrcFilterArguments.c_str(), nullptr, graph) < 0)
+        return false;
+    outSrcFilterCtx = srcFilterCtx;
+    AVFilterContext* sinkFilterCtx = nullptr;
+    outSinkFilterCtx = nullptr;
+    if (avfilter_graph_create_filter(&sinkFilterCtx, bufferSink, "out", nullptr, nullptr, graph) < 0)
+        return false;
+    outSinkFilterCtx = sinkFilterCtx;
+    return true;
+}
+
+bool PlayerTypes::FFmpegFrameFilter::addFrameWithFlags(AVFilterContext* srcFilterCtx, AVFrame* frame, FilterSrcFlag flags)
+{
+    if (av_buffersrc_add_frame_flags(srcFilterCtx, frame, flags) < 0)
+        return false;
+    return true;
+}
+
+PlayerTypes::SharedPtr<AVFrame> PlayerTypes::FFmpegFrameFilter::getOutputFrame(AVFilterContext* sinkFilterCtx, FilterSinkFlag flags)
+{
+    SharedPtr<AVFrame> output{ makeSharedFrame() };
+    if (av_buffersink_get_frame(sinkFilterCtx, output.get()) < 0)
+        return makeSharedFrame(nullptr); // false
+    return output;
+}
+
+std::string PlayerTypes::FFmpegFrameFilter::getFilterNameByType(FilterType type)
+{
+    switch (type)
+    {
+    case FFmpegFrameFilter::AudioVolumeFilter:
+        return "volume";
+    case FFmpegFrameFilter::None:
+    default:
+        break;
+    }
+    return "";
+}
+
+
+PlayerTypes::SharedPtr<PlayerTypes::FrameFilter> PlayerTypes::FFmpegFrameFilterGraph::createFilter(FilterType filterType, AVCodecContext* codecCtx)
+{
+    switch (filterType)
+    {
+    case PlayerTypes::FFmpegFrameFilter::None:
+        return std::make_shared<FFmpegFrameDefaultFilter>(codecCtx);
+    case PlayerTypes::FFmpegFrameFilter::AudioVolumeFilter:
+        return std::make_shared<FFmpegFrameVolumeFilter>(codecCtx);
+    default:
+        break;
+    }
+    return SharedPtr<FrameFilter>(nullptr);
+}
+
+//bool PlayerTypes::FFmpegFrameFilterGraph::destroyFilter(FrameFilter* filter)
+//{
+//    if (!filter) return false;
+//    delete filter;
+//    return true;
+//}
+
+bool PlayerTypes::FFmpegFrameFilterGraph::linkFilters()
+{
+    if (!FFmpegFrameFilter::createSrcSinkFilterCtx(this->getAVFilterGraph(), this->codecCtx, this->srcFilterCtx, this->sinkFilterCtx))
+        return false;
+    AVFilterContext* prevFilterCtx{ this->srcFilterCtx }; // 首个链接srcFilter
+    size_t failedCount = 0;
+    bool failed = false;
+    for (const auto& filter : filterList)
+    {
+        if (filter->type() == FrameFilter::NoneFilter)
+            continue;
+        auto currentFilterCtx = filter->getFilterCtx();
+        if (!currentFilterCtx)
+        {
+            if (!filter->createFilterCtxForGraph(this->filterGraph.get()))
+            {
+                failed = true;
+                ++failedCount;
+                continue;
+            }
+            currentFilterCtx = filter->getFilterCtx();
+        }
+        if (avfilter_link(prevFilterCtx, 0, currentFilterCtx, 0) < 0)
+        {
+            failed = true;
+            ++failedCount;
+            continue;
+        }
+        // 只有成功才更新上一个filterCtx
+        prevFilterCtx = currentFilterCtx;
+    }
+    // 链接sinkFilter
+    if (avfilter_link(prevFilterCtx, 0, this->sinkFilterCtx, 0) < 0)
+        return false;
+    return !failed; // 有一个失败就是失败
+}
+
+
+
+PlayerTypes::SharedPtr<AVFrame> PlayerTypes::FFmpegFrameFilterGraph::filter(AVFrame* frame, FrameFilter::FilterSrcFlag srcFlags, FrameFilter::FilterSinkFlag sinkFlags)
+{
+    // 添加帧到滤镜图
+    if (!FFmpegFrameFilter::addFrameWithFlags(this->srcFilterCtx, frame, srcFlags))
+        return makeSharedFrame(nullptr);
+    // 从滤镜图获取处理后的帧
+    return FFmpegFrameFilter::getOutputFrame(this->sinkFilterCtx, sinkFlags);
+}
+
+bool PlayerTypes::FFmpegFrameFilterGraph::createFilterGraph()
+{
+    return FFmpegFrameFilterGraph::resetFilterGraph();
+}
+
+bool PlayerTypes::FFmpegFrameFilterGraph::resetFilterGraph()
+{
+    configured.store(false);
+    // 初始化滤镜图
+    filterGraph.reset(avfilter_graph_alloc());
+    if (!filterGraph)
+        return false;
+    return true;
+}
+
+bool PlayerTypes::FFmpegFrameFilterGraph::configureFilterGraph()
+{
+    if (configured.load())
+        return true; // 已经配置过了，不再配置
+    if (!linkFilters()) return false;
+    // 配置滤镜图
+    if (avfilter_graph_config(filterGraph.get(), nullptr) < 0)
+    {
+        configured.store(false);
+        return false;
+    }
+    configured.store(true);
+    return true;
+}
+
+bool PlayerTypes::FFmpegFrameFilterGraph::addFilter(SharedPtr<FrameFilter> filter)
+{
+    if (configured.load())
+        return false;
+    filterList.push_back(filter);
+    return true;
+}
+
+bool PlayerTypes::FFmpegFrameFilterGraph::insertFilterAfter(FrameFilter* filter, SharedPtr<FrameFilter> newFilter)
+{
+    if (configured.load())
+        return false;
+    for (auto it = filterList.begin(); it != filterList.end(); ++it)
+    {
+        if (it->get() == filter)
+        {
+            filterList.insert(++it, newFilter);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool PlayerTypes::FFmpegFrameFilterGraph::replaceFilter(FrameFilter* filter, SharedPtr<FrameFilter> newFilter)
+{
+    if (configured.load())
+        return false;
+    for (auto it = filterList.begin(); it != filterList.end(); ++it)
+    {
+        if (it->get() == filter)
+        {
+            filterList.erase(it++);
+            filterList.insert(it, newFilter);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool PlayerTypes::FFmpegFrameFilterGraph::removeFilter(FrameFilter* filter)
+{
+    if (configured.load())
+        return false;
+    for (auto it = filterList.begin(); it != filterList.end(); ++it)
+    {
+        if (it->get() == filter)
+        {
+            filterList.erase(it++);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool PlayerTypes::FFmpegFrameFilterGraph::addFilter(FilterType filterType)
+{
+    if (configured.load())
+        return false;
+    auto f = createFilter(filterType, codecCtx);
+    if (!f) return false;
+    return addFilter(f);
+}
+
+bool PlayerTypes::FFmpegFrameFilterGraph::insertFilterAfter(FrameFilter* filter, FilterType filterType)
+{
+    if (configured.load())
+        return false;
+    auto f = createFilter(filterType, codecCtx);
+    if (!f) return false;
+    return insertFilterAfter(filter, f);
+}
+
+bool PlayerTypes::FFmpegFrameFilterGraph::replaceFilter(FrameFilter* filter, FilterType filterType)
+{
+    if (configured.load())
+        return false;
+    auto f = createFilter(filterType, codecCtx);
+    if (!f) return false;
+    return replaceFilter(filter, f);
+}
+
+
+bool PlayerTypes::FFmpegFrameVolumeFilter::adjustVolume(double volume)
+{
+    std::string volumeStr = std::to_string(volume);
+    // 设置新的音量值
+    int ret1 = 0;
+    int ret2 = 0;
+    if (filterGraph)
+        ret1 = avfilter_graph_send_command(filterGraph.get(), getId().c_str(), "volume", volumeStr.c_str(), nullptr, 0, 0);
+    if (externalFilterGraph)
+        ret2 = avfilter_graph_send_command(externalFilterGraph, getId().c_str(), "volume", volumeStr.c_str(), nullptr, 0, 0);
+    //int ret = av_opt_set_double(filterCtx, "volume", volume, AV_OPT_SEARCH_CHILDREN);
+    //if (ret < 0)
+    //    return false;
+    //ret = avfilter_graph_config(filterGraph.get(), nullptr);
+    return ret1 >= 0 && ret2 >= 0;
+}
+
+bool PlayerTypes::FFmpegFrameVolumeFilter::createAndLinkSingleVolumeFilter()
+{
+    if (!createSingleFilter()) return false;
+    return linkSingleFilter();
+}
+
+PlayerTypes::SharedPtr<AVFrame> PlayerTypes::FFmpegFrameDefaultFilter::filter(AVFrame* frame, FilterSrcFlag srcFlag, FilterSinkFlag sinkFlag)
+{
+    SharedPtr<AVFrame> output{ makeSharedFrame() };
+    if (av_frame_ref(output.get(), frame) < 0)
+        return makeSharedFrame(nullptr);
+    return output;
+}
+
+bool PlayerTypes::FFmpegFrameVolumeFilter::createSingleFilter()
+{
+    return FFmpegFrameFilter::createSingleFilter(type(), getId(), getVolumeFilterArguments());
+}
+
+bool PlayerTypes::FFmpegFrameVolumeFilter::linkSingleFilter()
+{
+    if (!isSrcSinkFilterCtxCreated())
+    {
+        createSrcSinkFilterCtx(filterGraph.get());
+        if (!isSrcSinkFilterCtxCreated())
+            return false;
+    }
+    return FFmpegFrameFilter::linkSingleFilter(filterCtx);
+}
+
+bool PlayerTypes::FFmpegFrameVolumeFilter::setupGraphWithSingleFilter()
+{
+    if (!createFilterGraph()) return false;
+    if (!createAndLinkSingleVolumeFilter()) return false;
+    return configureFilterGraph();
+}
+
+bool PlayerTypes::FFmpegFrameVolumeFilter::createFilterCtxForGraph(AVFilterGraph* filterGraph)
+{
+    AVFilterContext* ctx = createFilterContext(filterGraph, type(), getId(), getVolumeFilterArguments());
+    filterCtx = ctx;
+    if (ctx) this->externalFilterGraph = filterGraph;
+    return ctx;
+}
+
+PlayerTypes::SharedPtr<AVFrame> PlayerTypes::FFmpegFrameVolumeFilter::filter(AVFrame* frame, FilterSrcFlag srcFlag, FilterSinkFlag sinkFlag)
+{
+    // 添加帧到滤镜图
+    if (!addFrameWithFlags(frame, srcFlag))
+        return makeSharedFrame(nullptr);
+    // 从滤镜图获取处理后的帧
+    return getOutputFrame(sinkFlag);
+}
+
+bool PlayerTypes::FFmpegFrameVolumeFilter::setVolume(double vol)
+{
+    vol = clampVolume(vol);
+    double oldVol = this->vol.load();
+    if (vol != oldVol) // 只有不相等才设置
+    {
+        this->vol.store(vol);
+        return adjustVolume(vol);
+    }
+    return true;
+}
+

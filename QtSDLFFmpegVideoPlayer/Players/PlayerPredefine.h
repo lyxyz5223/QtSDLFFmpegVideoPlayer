@@ -16,20 +16,25 @@
 #include <thread>
 #include <variant>
 #include <span>
+#include <list> // 链表
 //#include <Windows.h>
 
 extern "C"
 {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
-#include <libavfilter/avfilter.h> // 音量调节，倍速等
 #include <libswscale/swscale.h>
 #include <libswresample/swresample.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/opt.h>
 #include <libavutil/time.h>
 #include <libavutil/hwcontext.h>
+
+#include <libavfilter/avfilter.h> // 音量调节，倍速等
+#include <libavfilter/buffersrc.h>
+#include <libavfilter/buffersink.h>
 }
+
 #include <Logger.h>
 
 #include "EnumDefine.h"
@@ -84,6 +89,7 @@ public:
     using AVFilterGraphConstDeleter = ConstDeleter<AVFilterGraph>;
     // AVFilterGraph智能指针删除器
     static AVFilterGraphConstDeleter constDeleterAVFilterGraph;
+
 
     //inline constexpr static auto ThreadSleepMs = [] (size_t duration) {
     //    auto to = std::chrono::steady_clock::now() + std::chrono::milliseconds(duration);
@@ -157,6 +163,16 @@ public:
     using UniquePtrD = std::unique_ptr<T, Deleter>;
     template<typename T>
     using SharedPtr = std::shared_ptr<T>;
+
+    // 自动分配内存
+    static SharedPtr<AVFrame> makeSharedFrame() {
+        return SharedPtr<AVFrame>(av_frame_alloc(), constDeleterAVFrame);
+    }
+    // 使用已有内存创建智能指针
+    static SharedPtr<AVFrame> makeSharedFrame(AVFrame* frame) {
+        return SharedPtr<AVFrame>(frame, constDeleterAVFrame);
+    }
+
 
     // 流索引映射类型
     template <typename T>
@@ -1038,34 +1054,253 @@ public:
         }
     };
 
+    // 帧滤镜基类
     struct FrameFilter {
-        virtual void filter(AVFrame* frame) = 0;
-        FrameFilter() = default;
+        // Unknown use
+        enum FilterFlag {
+            FlagDynamicInputs = AVFILTER_FLAG_DYNAMIC_INPUTS,
+            FlagDynamicOutputs = AVFILTER_FLAG_DYNAMIC_OUTPUTS,
+            FlagSliceThreads = AVFILTER_FLAG_SLICE_THREADS,
+            FlagMetadataOnly = AVFILTER_FLAG_METADATA_ONLY,
+            FlagHwDevice = AVFILTER_FLAG_HWDEVICE,
+            FlagSupportTimelineGeneric = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
+            FlagSupportTimelineInternal = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL,
+            FlagSupportTimeline = AVFILTER_FLAG_SUPPORT_TIMELINE, // AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL
+        };
+        enum FilterSrcFlag {
+            /**
+             * One-time use of frames, no need to keep the original frame
+             * The reference-counted frame will be cleared, and your frame will be cleared after the call; the non-reference-counted frame will copy the data.
+             */
+            SrcFlagNone = 0,
+            /**
+             * Do not check for format changes.
+             */
+            SrcFlagDonotCheckFormat = AV_BUFFERSRC_FLAG_NO_CHECK_FORMAT,
+            /**
+             * Immediately push the frame to the output.
+             */
+            SrcFlagPushImmediately = AV_BUFFERSRC_FLAG_PUSH,
+            /**
+             * Keep a reference to the frame.
+             * If the frame if reference-counted, create a new reference; otherwise
+             * copy the frame data.
+             */
+            SrcFlagKeepReference = AV_BUFFERSRC_FLAG_KEEP_REF,
+        };
+        enum FilterSinkFlag {
+            SinkFlagNone = 0,
+            /**
+             * Tell av_buffersink_get_buffer_ref() to read video/samples buffer
+             * reference, but not remove it from the buffer. This is useful if you
+             * need only to read a video/samples buffer, without to fetch it.
+             */
+            SinkFlagPeek = AV_BUFFERSINK_FLAG_PEEK,
+            /**
+             * Tell av_buffersink_get_buffer_ref() not to request a frame from its input.
+             * If a frame is already buffered, it is read (and removed from the buffer),
+             * but if no frame is present, return AVERROR(EAGAIN).
+             */
+            SinkFlagNoRequest = AV_BUFFERSINK_FLAG_NO_REQUEST
+        };
+        enum FilterType {
+            None = 0, // 无滤镜
+            NoneFilter = None,
+            AudioVolumeFilter,
+        };
+        explicit FrameFilter() = default;
         virtual ~FrameFilter() = default;
+        virtual FilterType type() const = 0;
+        virtual SharedPtr<AVFrame> filter(AVFrame* frame, FilterSrcFlag srcFlag = SrcFlagKeepReference, FilterSinkFlag sinkFlag = SinkFlagNone) = 0;
+        virtual bool isValid() const = 0;
+        virtual AVFilterContext* getFilterCtx() = 0;
+        virtual const AVFilterContext* getFilterCtx() const = 0;
+        virtual bool createFilterCtxForGraph(AVFilterGraph* filterGraph) = 0;
+        virtual bool setupGraphWithSingleFilter() = 0;
+        virtual bool createSingleFilter() = 0;
+        virtual bool linkSingleFilter() = 0;
+        // 创建滤镜图，如果使用FrameFilterGraph则不需要调用此函数
+        virtual bool createFilterGraph() = 0;
+        // 配置滤镜图，如果使用FrameFilterGraph则不需要调用此函数
+        virtual bool configureFilterGraph() = 0;
     private:
         // 禁止拷贝与赋值
         FrameFilter(const FrameFilter&) = delete;
         FrameFilter& operator=(const FrameFilter&) = delete;
     };
+    struct FFmpegFrameFilterGraph; // 前置声明
+    // FFmpeg滤镜基类/接口
+    struct FFmpegFrameFilter : public FrameFilter {
+        explicit FFmpegFrameFilter(AVCodecContext* codecCtx) : codecCtx(codecCtx) {}
+        virtual ~FFmpegFrameFilter() = default;
+        virtual SharedPtr<AVFrame> filter(AVFrame* frame, FilterSrcFlag srcFlag = SrcFlagKeepReference, FilterSinkFlag sinkFlag = SinkFlagNone) override = 0;
+        virtual FilterType type() const override = 0;
+        // 创建并配置带有单个滤镜的滤镜图，如果使用FrameFilterGraph则不需要调用此函数
+        virtual bool setupGraphWithSingleFilter() override = 0;
+        virtual bool createSingleFilter() override = 0;
+        virtual bool linkSingleFilter() override = 0;
+        // 创建滤镜图，如果使用FrameFilterGraph则不需要调用此函数
+        virtual bool createFilterGraph() override;
+        // 配置滤镜图，如果使用FrameFilterGraph则不需要调用此函数
+        virtual bool configureFilterGraph() override;
+        virtual AVFilterContext* getFilterCtx() override { return filterCtx; }
+        virtual const AVFilterContext* getFilterCtx() const override { return filterCtx; }
+        virtual bool createFilterCtxForGraph(AVFilterGraph* filterGraph) override = 0;
 
-    class FrameVolumeFilter : public FrameFilter {
+    private:
+        bool inited = false;
+        bool initializeSrcSinkFilterCtx(AVFilterGraph* graph);
+    protected:
         AVCodecContext* codecCtx{ nullptr };
-        AtomicDouble vol{ 1.0 }; // 音量: [0.0, 1.0]
-        UniquePtr<AVFilterContext> srcCtx{ nullptr };
-        UniquePtr<AVFilterContext> volumeCtx{ nullptr };
-        UniquePtr<AVFilterContext> sinkCtx{ nullptr };
+        UniquePtr<AVFilterGraph> filterGraph{ nullptr, constDeleterAVFilterGraph };
+        AVFilterContext* srcFilterCtx{ nullptr }; // 内存交由滤镜图管理
+        AVFilterContext* sinkFilterCtx{ nullptr }; // 内存交由滤镜图管理
+        AVFilterContext* filterCtx{ nullptr }; // 滤镜上下文
+        // 创建源和接收滤镜以及滤镜图，并设置相关参数
+        void createSrcSinkFilterCtx(AVFilterGraph* graph) { inited = initializeSrcSinkFilterCtx(graph); }
+        // 判断源和接收滤镜和滤镜图是否已初始化
+        bool isSrcSinkFilterCtxCreated() const { return inited; }
+        bool isFilterCtxCreated() const { return filterCtx; }
+        bool createSingleFilter(FilterType type, std::string id, std::string args);
+        bool createSingleFilter(std::string filterName, std::string id, std::string args);
+        bool linkSingleFilter(AVFilterContext* filterCtx); // 链接中间滤镜到源和接收滤镜之间
+        // 创建单个滤镜、源滤镜和接收滤镜并链接，如果使用FrameFilterGraph则不需要调用此函数
+        bool createAndLinkSingleFilter(FilterType type, std::string id, std::string args);
+        bool createAndLinkSingleFilter(std::string filterName, std::string id, std::string args);
+        bool addFrameWithFlags(AVFrame* frame, FilterSrcFlag flags = SrcFlagNone); // 将frame添加到滤镜图中
+        SharedPtr<AVFrame> getOutputFrame(FilterSinkFlag flags = SinkFlagNone); // 从滤镜图中获取输出frame
     public:
-        FrameVolumeFilter(AVCodecContext* codecCtx, double volume = 1.0) : codecCtx(codecCtx), vol(volume) {}
-        ~FrameVolumeFilter() = default;
-        virtual void filter(AVFrame* frame) override;
-        virtual void setVolume(double vol) {
-            if (vol < 0.0) vol = 0.0;
-            if (vol > 100.0) vol = 100.0;
-            this->vol.store(vol);
+        static AVFilterContext* createFilterContext(AVFilterGraph* filterGraph, FilterType type, std::string id, std::string args);
+        static AVFilterContext* createFilterContext(AVFilterGraph* filterGraph, std::string filterName, std::string id, std::string args);
+        static bool createSrcSinkFilterCtx(AVFilterGraph* graph, AVCodecContext* codecCtx, AVFilterContext*& outSrcFilterCtx, AVFilterContext*& outSinkFilterCtx);
+        // 根据FilterType获取滤镜名称
+        static std::string getFilterNameByType(FilterType type);
+        static bool addFrameWithFlags(AVFilterContext* srcFilterCtx, AVFrame* frame, FilterSrcFlag flags = SrcFlagNone); // 将frame添加到滤镜图中
+        static SharedPtr<AVFrame> getOutputFrame(AVFilterContext* sinkFilterCtx, FilterSinkFlag flags = SinkFlagNone); // 从滤镜图中获取输出frame
+    };
+    // 滤镜图基类/接口
+    struct FrameFilterGraph {
+        explicit FrameFilterGraph() = default;
+        virtual ~FrameFilterGraph() = default;
+        // Factory method, 工厂函数
+        //virtual SharedPtr<FrameFilterGraph> createGraph(AVCodecContext* codecCtx) final;
+        // 滤镜处理函数
+        virtual SharedPtr<AVFrame> filter(AVFrame* frame, FrameFilter::FilterSrcFlag srcFlags = FrameFilter::SrcFlagKeepReference, FrameFilter::FilterSinkFlag sinkFlags = FrameFilter::SinkFlagNone) = 0;
+        // 判断滤镜图是否有效/是否已正确初始化
+        virtual bool isValid() const = 0;
+        // 创建滤镜图
+        virtual bool createFilterGraph() = 0;
+        // 重置滤镜图
+        virtual bool resetFilterGraph() = 0;
+        // 配置滤镜图
+        virtual bool configureFilterGraph() = 0;
+        // 添加一个现有的滤镜到滤镜图中，该滤镜将排在最后，将参与管理生命周期
+        virtual bool addFilter(SharedPtr<FrameFilter> filter) = 0;
+        // 插入滤镜到指定滤镜后，filter为nullptr时插入到开头，将参与管理新插入的生命周期
+        virtual bool insertFilterAfter(FrameFilter* filter, SharedPtr<FrameFilter> newFilter) = 0;
+        // 替换滤镜，将参与管理新插入的生命周期，旧的将会自动判断是否需要释放内存
+        virtual bool replaceFilter(FrameFilter* filter, SharedPtr<FrameFilter> newFilter) = 0;
+        // 移除滤镜，自动判断是否需要释放内存
+        virtual bool removeFilter(FrameFilter* filter) = 0;
+    private:
+        // 禁止拷贝与赋值
+        FrameFilterGraph(const FrameFilterGraph&) = delete;
+        FrameFilterGraph& operator=(const FrameFilterGraph&) = delete;
+    };
+    // FFmpeg滤镜图封装
+    struct FFmpegFrameFilterGraph : public FrameFilterGraph {
+        using FilterType = FFmpegFrameFilter::FilterType;
+        // Factory method, 工厂函数
+        static SharedPtr<FrameFilter> createFilter(FilterType filterType, AVCodecContext* codecCtx);
+        // 销毁一个FrameFilter实例，如果已经加入滤镜图，此函数不会将滤镜移出滤镜图
+        //static bool destroyFilter(FrameFilter* filter);
+    private:
+        AVCodecContext* codecCtx{ nullptr };
+        UniquePtr<AVFilterGraph> filterGraph{ nullptr, constDeleterAVFilterGraph };
+        AVFilterContext* srcFilterCtx{ nullptr };
+        AVFilterContext* sinkFilterCtx{ nullptr };
+        std::list<SharedPtr<FrameFilter>> filterList{};
+        AtomicBool configured{ false };
+    protected:
+        bool linkFilters();
+    public:
+        // 构造函数，传入codecCtx用于初始化源和接收滤镜
+        explicit FFmpegFrameFilterGraph(AVCodecContext* codecCtx) : codecCtx(codecCtx) { createFilterGraph(); }
+        virtual ~FFmpegFrameFilterGraph() = default;
+        virtual AVFilterGraph* getAVFilterGraph() { return filterGraph.get(); }
+        virtual const AVFilterGraph* getAVFilterGraph() const { return filterGraph.get(); }
+
+        // 滤镜处理函数
+        virtual SharedPtr<AVFrame> filter(AVFrame* frame, FrameFilter::FilterSrcFlag srcFlags = FrameFilter::SrcFlagKeepReference, FrameFilter::FilterSinkFlag sinkFlags = FrameFilter::SinkFlagNone) override;
+        // 判断滤镜图是否有效/是否已正确初始化
+        virtual bool isValid() const override { return configured.load(); }
+        // 创建滤镜图
+        virtual bool createFilterGraph() override;
+        // 重置滤镜图
+        virtual bool resetFilterGraph() override;
+        // 配置滤镜图
+        virtual bool configureFilterGraph() override;
+        // 添加一个现有的滤镜到滤镜图中，该滤镜将排在最后，配置滤镜图前才能添加，将接管生命周期，需使用
+        virtual bool addFilter(SharedPtr<FrameFilter> filter) override;
+        // 插入滤镜到指定滤镜后，filter为nullptr时插入到开头，配置滤镜图前才能插入
+        virtual bool insertFilterAfter(FrameFilter* filter, SharedPtr<FrameFilter> newFilter) override;
+        // 替换滤镜，配置滤镜图前才能替换
+        virtual bool replaceFilter(FrameFilter* filter, SharedPtr<FrameFilter> newFilter) override;
+        // 移除滤镜，配置滤镜图前才能移除
+        virtual bool removeFilter(FrameFilter* filter) override;
+
+        // 创建并添加滤镜到滤镜图中，该滤镜将排在最后，配置滤镜图前才能添加
+        virtual bool addFilter(FilterType filterType);
+        // 创建并插入滤镜到指定滤镜后，filter为nullptr时插入到开头，配置滤镜图前才能插入
+        virtual bool insertFilterAfter(FrameFilter* filter, FilterType filterType);
+        // 创建并替换滤镜，配置滤镜图前才能替换
+        virtual bool replaceFilter(FrameFilter* filter, FilterType filterType);
+    };
+    // 默认滤镜，什么都不做，直接返回输入的frame
+    struct FFmpegFrameDefaultFilter : public FFmpegFrameFilter {
+        FFmpegFrameDefaultFilter(AVCodecContext* codecCtx) : FFmpegFrameFilter(codecCtx) {}
+        ~FFmpegFrameDefaultFilter() = default;
+        virtual bool createFilterGraph() override { return true; }
+        virtual bool configureFilterGraph() override { return true; }
+        virtual bool createSingleFilter() override { return true; }
+        virtual bool linkSingleFilter() override { return true; }
+        virtual bool setupGraphWithSingleFilter() override { return true; }
+        virtual SharedPtr<AVFrame> filter(AVFrame* frame, FilterSrcFlag srcFlag = SrcFlagKeepReference, FilterSinkFlag sinkFlag = SinkFlagNone) override;
+        virtual bool isValid() const override { return true; }
+        virtual FilterType type() const override {
+            return FilterType::NoneFilter;
         }
-        virtual double volume() const {
-            return vol.load();
+        virtual bool createFilterCtxForGraph(AVFilterGraph* filterGraph) override { return true; }
+    };
+    // 音量滤镜
+    class FFmpegFrameVolumeFilter : public FFmpegFrameFilter {
+        AtomicDouble vol{ 1.0 }; // 音量: [0.0, 1.0]
+        AVFilterGraph* externalFilterGraph{ nullptr };
+        const std::string getVolumeFilterArguments() const {
+            return LoggerFormatNS::format("volume={}", volume());
         }
+        constexpr const double clampVolume(double volume) const { return std::clamp(volume, 0.0, 1.0); }
+        bool adjustVolume(double volume);
+        bool createAndLinkSingleVolumeFilter();
+        std::string getId() const {
+            return "volume";
+        }
+    public:
+        FFmpegFrameVolumeFilter(AVCodecContext* codecCtx, double volume = 1.0)
+            : FFmpegFrameFilter(codecCtx), vol(clampVolume(volume)) {}
+        ~FFmpegFrameVolumeFilter() {
+            
+        }
+        virtual SharedPtr<AVFrame> filter(AVFrame* frame, FilterSrcFlag srcFlag = SrcFlagKeepReference, FilterSinkFlag sinkFlag = SinkFlagNone) override;
+        // 确保所有滤镜、滤镜图和volume滤镜都已初始化
+        virtual bool isValid() const override { return isSrcSinkFilterCtxCreated() && isFilterCtxCreated(); }
+        virtual FilterType type() const override { return FilterType::AudioVolumeFilter; }
+        virtual bool createSingleFilter() override;
+        virtual bool linkSingleFilter() override;
+        virtual bool setupGraphWithSingleFilter() override;
+        virtual bool createFilterCtxForGraph(AVFilterGraph* filterGraph) override;
+        virtual bool setVolume(double vol);
+        virtual double volume() const { return vol.load(); }
     };
 };
 
@@ -1080,7 +1315,7 @@ public:
     static bool findStreamInfo(Logger* logger, AVFormatContext* formatCtx);
     static bool readFrame(Logger* logger, AVFormatContext* fmtCtx, AVPacket*& packet, bool allocPacket = true, bool* isEof = nullptr);
     static bool findAndOpenAudioDecoder(Logger* logger, AVFormatContext* formatCtx, StreamIndexType streamIndex, UniquePtr<AVCodecContext>& codecContext);
-    static bool findAndOpenVideoDecoder(Logger* logger, AVFormatContext* formatCtx, StreamIndexType streamIndex, UniquePtr<AVCodecContext>& codecContext, bool useHardwareDecoder = false, AVHWDeviceType* hwDeviceType = nullptr, AVPixelFormat* hwPixelFormat = nullptr);
+    static bool findAndOpenVideoDecoder(Logger* logger, AVFormatContext* formatCtx, StreamIndexType streamIndex, UniquePtr<AVCodecContext>& codecContext, bool useHardwareDecoder = false, size_t hardwareExtraFrameCount = 20, AVHWDeviceType* hwDeviceType = nullptr, AVPixelFormat* hwPixelFormat = nullptr);
     static void listAllHardwareDecoders(Logger* logger);
     // fromType 表示从AVHWDeviceType的哪一个的下一个开始遍历查找
     // hwDeviceType与hwPixelFormat为输出
@@ -1116,7 +1351,7 @@ class PlayerInterface : public PlayerTypes
 {
 private:
     Logger& logger;
-    friend class PlayerTypes;
+    friend class PlayerTypes::RequestTaskQueueHandler;
 private:
     void playbackStateChangeEventHandler(MediaPlaybackStateChangeEvent* e);
     void requestHandleEventHandler(MediaRequestHandleEvent* e);

@@ -6,16 +6,16 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>842</width>
-    <height>438</height>
+    <width>859</width>
+    <height>465</height>
    </rect>
   </property>
   <property name="windowTitle">
    <string>Player</string>
   </property>
   <widget class="QWidget" name="centralWidget">
-   <layout class="QGridLayout" name="gridLayout">
-    <item row="0" column="0">
+   <layout class="QVBoxLayout" name="verticalLayout">
+    <item>
      <widget class="QWidget" name="videoRenderWidget" native="true">
       <property name="sizePolicy">
        <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
@@ -30,13 +30,48 @@
        </size>
       </property>
       <layout class="QGridLayout" name="gridLayout_3">
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
+       <property name="spacing">
+        <number>0</number>
+       </property>
        <item row="0" column="0">
-        <layout class="QGridLayout" name="gridLayoutVideoRenderWidget"/>
+        <layout class="QGridLayout" name="gridLayoutVideoRenderWidget">
+         <property name="spacing">
+          <number>0</number>
+         </property>
+        </layout>
        </item>
       </layout>
      </widget>
     </item>
-    <item row="2" column="0">
+    <item>
+     <widget class="QSlider" name="sliderMediaProgress">
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+        <horstretch>0</horstretch>
+        <verstretch>0</verstretch>
+       </sizepolicy>
+      </property>
+      <property name="tracking">
+       <bool>false</bool>
+      </property>
+      <property name="orientation">
+       <enum>Qt::Orientation::Horizontal</enum>
+      </property>
+     </widget>
+    </item>
+    <item>
      <layout class="QHBoxLayout" name="controllerBar">
       <property name="spacing">
        <number>6</number>
@@ -159,7 +194,8 @@
          <string/>
         </property>
         <property name="icon">
-         <iconset theme="QIcon::ThemeIcon::MediaPlaybackStart"/>
+         <iconset resource="../resources/QtSDLFFmpegVideoPlayer.qrc">
+          <normaloff>:/svgs/svgs/play.svg</normaloff>:/svgs/svgs/play.svg</iconset>
         </property>
         <property name="iconSize">
          <size>
@@ -203,7 +239,8 @@
          <string/>
         </property>
         <property name="icon">
-         <iconset theme="QIcon::ThemeIcon::MediaSkipBackward"/>
+         <iconset resource="../resources/QtSDLFFmpegVideoPlayer.qrc">
+          <normaloff>:/svgs/svgs/skip-prev.svg</normaloff>:/svgs/svgs/skip-prev.svg</iconset>
         </property>
         <property name="iconSize">
          <size>
@@ -225,7 +262,8 @@
          <string/>
         </property>
         <property name="icon">
-         <iconset theme="QIcon::ThemeIcon::MediaSkipForward"/>
+         <iconset resource="../resources/QtSDLFFmpegVideoPlayer.qrc">
+          <normaloff>:/svgs/svgs/skip-next.svg</normaloff>:/svgs/svgs/skip-next.svg</iconset>
         </property>
         <property name="iconSize">
          <size>
@@ -339,22 +377,6 @@
       </item>
      </layout>
     </item>
-    <item row="1" column="0">
-     <widget class="QSlider" name="sliderMediaProgress">
-      <property name="sizePolicy">
-       <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
-        <horstretch>0</horstretch>
-        <verstretch>0</verstretch>
-       </sizepolicy>
-      </property>
-      <property name="tracking">
-       <bool>false</bool>
-      </property>
-      <property name="orientation">
-       <enum>Qt::Orientation::Horizontal</enum>
-      </property>
-     </widget>
-    </item>
    </layout>
   </widget>
   <widget class="QMenuBar" name="mainMenuBar">
@@ -362,7 +384,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>842</width>
+     <width>859</width>
      <height>21</height>
     </rect>
    </property>

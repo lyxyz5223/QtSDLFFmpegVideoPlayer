@@ -183,56 +183,55 @@ private:
         return false;
         };
 
-    AtomicDouble audioClock{ 0.0 }; // 音频时钟
+    AtomicDouble audioClock{ 0.0 }; // 音频时钟，单位：秒
+    AtomicDouble videoClock{ 0.0 }; // 视频时钟，单位：秒
     AtomicBool isAudioClockStable{ false }; // 音频时钟是否稳定（seek设置后会不稳定，正常播放才会趋于稳定）
+    AtomicBool isVideoClockStable{ false }; // 视频时钟是否稳定（seek设置后会不稳定，正常播放才会趋于稳定）
     //AtomicStateMachine<PlayerState> playerState{ PlayerState::Stopped };
     AtomicInt videoSeekingCount{ 0 }; // 视频seek处理中计数
     AtomicInt audioSeekingCount{ 0 }; // 音频seek处理中计数
 
+    // 用于低通滤波
+    double avgDiffVideoClockSync{ 0.0 };
+    double avgDiffAudioClockSync{ 0.0 };
+    static constexpr double videoFilterAlpha = 0.95;  // 越高越平滑，越低越灵敏
+    static constexpr double audioFilterAlpha = 0.9;  // 越高越平滑，越低越灵敏
     AudioClockSyncFunction audioClockSyncFunction = [&](const AtomicDouble& audioClock, const AtomicBool& isClockStable, const double& audioRealtimeClock, int64_t& sleepTime) {
         this->audioClock.store(audioClock.load());
         this->isAudioClockStable.store(isClockStable.load());
-        return false;
+        bool result = false;
+        if (0 == videoSeekingCount.load() && audioSeekingCount.load() == 0
+            && isVideoClockStable.load() && isClockStable.load())
+        {
+            //if (videoClock.load() > 0.0)
+            //{
+            //    double sleepTimeS = audioClock.load() - videoClock.load(); // 单位：秒
+            //    avgDiffAudioClockSync = avgDiffAudioClockSync * audioFilterAlpha + sleepTimeS * (1.0 - audioFilterAlpha);   // 简单 IIR 滤波
+            //    sleepTime = static_cast<int64_t>(avgDiffAudioClockSync * 1000); // 转换为毫秒
+            //    if (sleepTime > 100)
+            //        result = true;
+            //}
+        }
+        return result;
         };
-    VideoClockSyncFunction videoClockSyncFunction = [&](const AtomicDouble& videoClock, const AtomicBool& isClockStable, const double& videoRealtimeClock, int64_t& sleepTime) {
-        /*
-        // 先进行视频帧提前/落后计算
-        if (!audioPlaybackFinished) // 如果音频还在播放
-        {
-            // 精确的帧率控制
-            double sleepTime = videoClock - audioClock.load();
-            // 误差低通滤波
-            avgDiff = avgDiff * 0.9 + sleepTime * 0.1;   // 简单 IIR 滤波
-
-            if (avgDiff > 0.01)
-            { // 10 ms 以上才处理
-                size_t delay = (avgDiff * 1000);
-                if (delay > 0) // 如果avgDiff值很小，delay可能为0
-                {
-                    ThreadSleepMs(delay);
-                    logger.info("Video ahead: {} ms", delay);
-                }
-            }
-            else if (avgDiff < -0.1)
-            { // 落后 100 ms 再跳帧
-                logger.info("Video behind: {} ms", -avgDiff * 1000);
-                continue;
-            }
-            //SDL_Log("视频时间戳: %.3f, 实际时间: %.3f", videoClock, actualTime);
-        }
-        else // 音频播放结束
-        {
-            // 如果音频播放结束，则按固定帧率播放视频
-            ThreadSleepMs(frameDuration * 1000);
-        }
-        */
-        if (0 == videoSeekingCount && audioSeekingCount == 0
+    VideoClockSyncFunction videoClockSyncFunction = [&](const AtomicDouble& videoClock, const AtomicBool& isClockStable, const double& videoRealtimeClock, int64_t& sleepTime, bool& frameShouldDrop) {        
+        this->videoClock.store(videoClock.load());
+        this->isVideoClockStable.store(isClockStable.load());
+        frameShouldDrop = false;
+        sleepTime = 0;
+        if (0 == videoSeekingCount.load() && audioSeekingCount.load() == 0
             && isAudioClockStable.load() && isClockStable.load())
         {
-            if (audioClock.load())
+            if (audioClock.load() > 0.0)
             {
                 double sleepTimeS = videoClock.load() - audioClock.load(); // 单位：秒
-                sleepTime = static_cast<int64_t>(sleepTimeS * 1000); // 转换为毫秒
+                // 误差低通滤波
+                avgDiffVideoClockSync = avgDiffVideoClockSync * videoFilterAlpha + sleepTimeS * (1.0 - videoFilterAlpha);   // 简单 IIR 滤波
+                sleepTime = static_cast<int64_t>(avgDiffVideoClockSync * 1000); // 转换为毫秒
+                if (sleepTime < 16 && sleepTime > -16) // 由于std::sleep_for的精度大概为0.5ms
+                    sleepTime *= 0.85;
+                if (sleepTime < -300)
+                    frameShouldDrop = true;
             }
             return true; // 直接返回true，交给调用者处理
             // 返回值true && (sleepTime != 0)表示需要睡眠/丢帧，false || (sleepTime == 0)表示不需要

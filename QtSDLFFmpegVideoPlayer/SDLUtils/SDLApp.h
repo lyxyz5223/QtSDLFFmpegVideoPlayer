@@ -192,7 +192,7 @@ public:
     bool createWindowAndRenderer(const std::string& title, int width, int height, SDL_WindowFlags windowFlags);
     
     // 运行事件循环，只能运行一遍
-    void runEventLoop();
+    void runEventLoop(bool waitMode = false);
     // 停止所有事件循环
     void stopEventLoop();
     void stopEventLoopAsync();

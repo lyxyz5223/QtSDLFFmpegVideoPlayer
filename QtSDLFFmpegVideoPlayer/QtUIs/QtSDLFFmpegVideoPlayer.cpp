@@ -23,19 +23,22 @@ QtSDLFFmpegVideoPlayer::QtSDLFFmpegVideoPlayer(QWidget* parent)
     ui.videoRenderWidget->show();
     // 创建SDL窗口和渲染器
     createVideoWidget();
-    videoWidget->show();
-#ifdef USE_QT_MULTIMEDIA_WIDGET
+#ifdef USE_SDL_WIDGET
+#elif defined(USE_QT_MULTIMEDIA_WIDGET)
     qMediaPlayer = new QMediaPlayer(this);
     qAudioOutput = new QAudioOutput(this);
     qMediaPlayer->setVideoOutput(videoWidget);
     qMediaPlayer->setAudioOutput(qAudioOutput);
 #endif
+    taskbarMediaController.initialize(reinterpret_cast<HWND>(this->winId())); // 初始化任务栏媒体控制器
+
     // 启动SDL事件循环定时器，单次触发，间隔0ms
     sdlEventTimer = new QTimer(this);
     sdlEventTimer->setSingleShot(true);
     sdlEventTimer->setInterval(0);
     sdlEventTimer->connect(sdlEventTimer, &QTimer::timeout, this, &QtSDLFFmpegVideoPlayer::sdlEventLoop);
     sdlEventTimer->start();
+
     // 绑定菜单列表
     connect(ui.actionOpenFiles, SIGNAL(triggered()), this, SLOT(selectFilesAndPlay()));
     connect(ui.actionOpenFolder, SIGNAL(triggered()), this, SLOT(selectFolderAndPlay()));
@@ -59,6 +62,9 @@ QtSDLFFmpegVideoPlayer::QtSDLFFmpegVideoPlayer(QWidget* parent)
     // 绑定播放器控制按钮槽函数
     ui.playListDockWidgetContents->connect(ui.playListDockWidgetContents, &PlayListWidget::play, this, &QtSDLFFmpegVideoPlayer::playerPlayByPlayListIndex);
 
+
+    show();
+    taskbarMediaController.addThumbBarButtons();
 }
 
 QtSDLFFmpegVideoPlayer::~QtSDLFFmpegVideoPlayer()
@@ -78,7 +84,7 @@ void QtSDLFFmpegVideoPlayer::closeEvent(QCloseEvent* e)
     sdlEventTimer->disconnect();
     sdlEventTimer->deleteLater();
 #ifdef USE_SDL_WIDGET
-    SDLApp::instance()->stopEventLoopAsync();
+    //SDLApp::instance()->stopEventLoopAsync();
 #elif defined(USE_QT_MULTIMEDIA_WIDGET)
 #else
 #endif
@@ -309,6 +315,8 @@ void QtSDLFFmpegVideoPlayer::playerStop()
 
 void QtSDLFFmpegVideoPlayer::playerPlayByPlayListIndex(qsizetype index)
 {
+    if (!ui.playListDockWidgetContents->getPlayListSize())
+        return; // 判断播放列表是否为空，为空则不播放
     QString filePath = ui.playListDockWidgetContents->getPlayListItem(index).url;
     ui.playListDockWidgetContents->setCurrentPlayingIndex(index);
     playerPlay(filePath);

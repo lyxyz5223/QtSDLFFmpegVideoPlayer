@@ -10,8 +10,8 @@ public:
     // 用于AudioAdapter音频缓冲区大小
     static constexpr unsigned int DEFAULT_AUDIO_OUTPUT_STREAM_BUFFER_SIZE = 1024;
     // 用于音频队列
-    static constexpr int MAX_AUDIO_OUTPUT_STREAM_QUEUE_SIZE = 100;
-    static constexpr int MIN_AUDIO_OUTPUT_STREAM_QUEUE_SIZE = MAX_AUDIO_OUTPUT_STREAM_QUEUE_SIZE / 2; // 1 / 2
+    static constexpr int MAX_AUDIO_OUTPUT_STREAM_QUEUE_SIZE = 5;
+    static constexpr int MIN_AUDIO_OUTPUT_STREAM_QUEUE_SIZE = 3;// MAX_AUDIO_OUTPUT_STREAM_QUEUE_SIZE / 2; // 1 / 2
     // 默认音频输出通道数
     static constexpr int DEFAULT_NUMBER_CHANNELS_AUDIO_OUTPUT = 1;
     // 下面两个常量需同时满足，解码才会暂停
@@ -94,9 +94,8 @@ private:
         UniquePtrD<AudioAdapter> audioDevice;
         AtomicInt numberOfAudioOutputChannels = DEFAULT_NUMBER_CHANNELS_AUDIO_OUTPUT;
         Atomic<unsigned int> audioOutputStreamBufferSize = DEFAULT_AUDIO_OUTPUT_STREAM_BUFFER_SIZE;
-        Mutex mtxStreamQueue; // 用于保证在写入一段的时候不被读取
-        Queue<AudioStreamInfo> streamQueue;
-        AtomicBool streamUploadFinished{ false };
+        //Mutex mtxStreamQueue; // 用于保证在写入一段的时候不被读取
+        ConcurrentQueue<AudioStreamInfo> streamQueue;
         // 每次渲染音频修改的上下文
         //FrameContext renderFrameContext;
 
@@ -126,8 +125,10 @@ private:
 
         void clearPktAndStreamQueues() {
             demuxer.load()->flushPacketQueue(demuxerStreamType);
-            std::unique_lock lockMtxStreamQueue(mtxStreamQueue); // 记得加锁
-            Queue<AudioStreamInfo> streamQueueNew;
+            //std::unique_lock lockMtxStreamQueue(mtxStreamQueue); // 记得加锁
+            //Queue<AudioStreamInfo> streamQueueNew;
+            //streamQueue.swap(streamQueueNew);
+            ConcurrentQueue<AudioStreamInfo> streamQueueNew;
             streamQueue.swap(streamQueueNew);
         }
         // 重置所有变量，除了playOptions和filePath
@@ -479,10 +480,14 @@ private:
     //void readPackets();
 
     // （如果包队列少于或等于某个最小值）通知解码器有新包到达
-    void packetEnqueueCallback() { // 该函数内不能轻易使用playbackStateVariables中的packetQueue,formatCtx,streamIndex
-        if (!playbackStateVariables.demuxer.load()) return;
+    void packetEnqueueCallback() { // 该函数内不能轻易使用playbackStateVariables中的packetQueue,formatCtx,streamIndex,demuxer
+        DemuxerInterface* demuxer = nullptr;
+        if (demuxerMode == ComponentWorkMode::External)
+            demuxer = externalDemuxer.get(); // 此时可用playbackStateVariablesz中的demuxer
+        else
+            demuxer = playbackStateVariables.demuxer.load(); // 此时可用playbackStateVariablesz中的demuxer
         // 解复用器每次成功入队一个包后调用该回调函数，通知解码器继续解码
-        if (getQueueSize(*playbackStateVariables.demuxer.load()->getPacketQueue(playbackStateVariables.demuxerStreamType)) <= playbackStateVariables.demuxer.load()->getMinPacketQueueSize(playbackStateVariables.demuxerStreamType))
+        if (getQueueSize(*demuxer->getPacketQueue(playbackStateVariables.demuxerStreamType)) <= demuxer->getMinPacketQueueSize(playbackStateVariables.demuxerStreamType))
             playbackStateVariables.threadStateManager.wakeUpById(ThreadIdentifier::Decoder);
     }
 

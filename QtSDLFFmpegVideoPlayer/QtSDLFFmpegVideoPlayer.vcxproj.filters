@@ -95,6 +95,9 @@
     <ClCompile Include="QtUtils\QtMediaPlayer.cpp">
       <Filter>QtUtils</Filter>
     </ClCompile>
+    <ClCompile Include="QtUIs\TaskbarMediaController.cpp">
+      <Filter>QtUIs</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="AudioAdapter\AudioAdapter.h">
@@ -147,6 +150,9 @@
     </ClInclude>
     <ClInclude Include="resource.h">
       <Filter>1Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="QtUIs\TaskbarMediaController.h">
+      <Filter>QtUIs</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

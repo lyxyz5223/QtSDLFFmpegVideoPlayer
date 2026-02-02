@@ -1,4 +1,5 @@
 #include "SDLApp.h"
+#include <SDL3/SDL_system.h>
 
 std::mutex SDLApp::m_mutexInstance;
 SDLApp* SDLApp::m_instance = nullptr;
@@ -97,7 +98,7 @@ bool SDLApp::createWindowAndRenderer(const std::string& title, int width, int he
     return ret;
 }
 
-void SDLApp::runEventLoop()
+void SDLApp::runEventLoop(bool waitMode)
 {
     if (m_eventLoopRunning) // 已经在运行
         return;
@@ -105,10 +106,27 @@ void SDLApp::runEventLoop()
     m_eventLoopRunning = true;
     SDL_Event e;
     //while (SDL_WaitEvent(&e))
+    std::unordered_map<SDL_DisplayID, float> windowRefreshRates;
+    float maxRefreshRate = 0.0f;
     while (!m_shouldExit)
     {
-        if (!SDL_WaitEvent(&e))
-            continue;
+        auto eventBeginTime = SDL_GetPerformanceCounter();
+        if (waitMode)
+        {
+            if (!SDL_WaitEvent(&e))
+                continue;
+        }
+        else
+        {
+            if (!SDL_PollEvent(&e))
+            {
+                int64_t microseconds = 1;
+                if (maxRefreshRate > 0.0)
+                    microseconds = static_cast<int64_t>(1000000 * 0.01 / maxRefreshRate);
+                std::this_thread::sleep_for(std::chrono::microseconds(microseconds));
+                continue;
+            }
+        }
         if (m_shouldExit)
             break;
         //SDL_Log("Event Type: %u", e.type);
@@ -116,6 +134,16 @@ void SDLApp::runEventLoop()
             break;
         else
         {
+            SDL_Window* currentWindow = SDL_GetWindowFromEvent(&e);
+            SDL_DisplayID displayIndex = SDL_GetDisplayForWindow(currentWindow);
+            auto dispMode = SDL_GetCurrentDisplayMode(displayIndex);
+            float refreshRate = 0.0f;
+            if (dispMode)
+                refreshRate = dispMode->refresh_rate;
+            windowRefreshRates.emplace(displayIndex, refreshRate);
+            if (refreshRate > maxRefreshRate)
+                maxRefreshRate = refreshRate;
+
             bool handled = false;
             try {
                 if (e.type >= SDL_EVENT_USER && e.type < SDLApp::UserEvent)
