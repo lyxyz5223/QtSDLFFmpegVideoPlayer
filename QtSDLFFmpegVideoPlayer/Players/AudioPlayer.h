@@ -4,7 +4,7 @@
 // 音频库
 #include <AudioAdapter.h>
 
-class AudioPlayer : public PlayerInterface, private ConcurrentQueueOps
+class AudioPlayer : public AbstractPlayer, private ConcurrentQueueOps
 {
 public:
     // 用于AudioAdapter音频缓冲区大小
@@ -58,15 +58,15 @@ public:
         bool isMute{ false }; // 静音
     };
 
-    class AudioRenderEvent : public MediaEvent {
+    class AudioRenderEvent : public IMediaEvent {
         FrameContext* frameCtx{ nullptr };
     public:
         AudioRenderEvent(FrameContext* frameCtx)
-            : MediaEvent(MediaEventType::Render, StreamType::STAudio), frameCtx(frameCtx) {}
+            : IMediaEvent(MediaEventType::Render, StreamType::STAudio), frameCtx(frameCtx) {}
         virtual FrameContext* frameContext() const {
             return frameCtx;
         }
-        virtual UniquePtrD<MediaEvent> clone() const override {
+        virtual UniquePtrD<IMediaEvent> clone() const override {
             return std::make_unique<AudioRenderEvent>(*this);
         }
     };
@@ -101,17 +101,26 @@ private:
 
         // 解复用器
         StreamType demuxerStreamType{ STREAM_TYPES };
-        Atomic<DemuxerInterface*> demuxer{ nullptr };
+        Atomic<AbstractDemuxer*> demuxer{ nullptr };
         AVFormatContext* formatCtx{ nullptr };
         StreamIndexType streamIndex{ -1 };
         ConcurrentQueue<AVPacket*>* packetQueue{ nullptr };
 
         UniquePtr<AVCodecContext> codecCtx{ nullptr, constDeleterAVCodecContext };
         // 音频帧滤镜
-        UniquePtrD<FrameFilter> frameFilter{ nullptr };
+        StreamType filterGraphStreamType{ STREAM_TYPES };
+        UniquePtrD<FFmpegFrameFilterGraph> frameFilterGraph{ nullptr };
+
         // 音量与静音
         AtomicDouble volume{ 1.0 }; // 范围0.0 ~ 1.0
         AtomicBool isMute{ false };
+
+        // 播放速率（倍速）
+        AtomicDouble speed{ 1.0 };
+
+        // 均衡器参数
+        std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo> equalizerBandGains{ FFmpegFrameAudio10BandEqualizerFilter::defaultBandGains() };
+        AtomicBool isEqualizerEnabled{ false };
 
         // 时钟
         AtomicDouble audioClock{ 0.0 }; // 单位s
@@ -141,7 +150,8 @@ private:
             streamIndex = -1;
             formatCtx = nullptr;
             codecCtx.reset();
-            frameFilter.reset();
+            if (frameFilterGraph)
+                frameFilterGraph->clearFilters();
             audioClock.store(0.0);
             realtimeClock = 0.0;
             // 清空请求任务队列
@@ -175,7 +185,7 @@ private:
     }
 
 public:
-    AudioPlayer() : PlayerInterface(logger) {}
+    AudioPlayer() : AbstractPlayer(logger) {}
     ~AudioPlayer() {
         stop();
     }
@@ -272,6 +282,26 @@ public:
     virtual double getVolume() const override {
         return playbackStateVariables.volume.load();
     }
+    virtual void setSpeed(double speed) override {
+        playbackStateVariables.speed.store(speed);
+    }
+    virtual double getSpeed() const override {
+        return playbackStateVariables.speed.load();
+    }
+    virtual void setEqualizerState(bool enabled) {
+        playbackStateVariables.isEqualizerEnabled.store(enabled);
+    }
+    virtual void setEqualizerGains(const std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo>& gains) {
+        playbackStateVariables.equalizerBandGains = gains;
+    }
+    virtual void setEqualizerGain(size_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) {
+        if (bandIndex >= playbackStateVariables.equalizerBandGains.size())
+            return;
+        playbackStateVariables.equalizerBandGains[bandIndex] = gain;
+    }
+    virtual std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo> getEqualizerGains() const {
+        return playbackStateVariables.equalizerBandGains;
+    }
 
     // \param streamIndex -1表示使用AV_TIME_BASE计算，否则使用streamIndex指定的流的time_base
     virtual void notifySeek(uint64_t pts, StreamIndexType streamIndex = -1) override {
@@ -354,13 +384,13 @@ public:
     }
 
 protected:
-    virtual bool event(MediaEvent* e) override {
+    virtual bool event(IMediaEvent* e) override {
         if (e->type() == MediaEventType::Render)
         {
             AudioRenderEvent* re = static_cast<AudioRenderEvent*>(e);
             renderEvent(re);
         }
-        return PlayerInterface::event(e);
+        return AbstractPlayer::event(e);
     }
     // 渲染事件处理函数，子类可重写以实现自定义渲染逻辑
     virtual void renderEvent(AudioRenderEvent* e) {
@@ -481,11 +511,12 @@ private:
 
     // （如果包队列少于或等于某个最小值）通知解码器有新包到达
     void packetEnqueueCallback() { // 该函数内不能轻易使用playbackStateVariables中的packetQueue,formatCtx,streamIndex,demuxer
-        DemuxerInterface* demuxer = nullptr;
+        AbstractDemuxer* demuxer = nullptr;
         if (demuxerMode == ComponentWorkMode::External)
             demuxer = externalDemuxer.get(); // 此时可用playbackStateVariablesz中的demuxer
         else
             demuxer = playbackStateVariables.demuxer.load(); // 此时可用playbackStateVariablesz中的demuxer
+        if (!demuxer) return;
         // 解复用器每次成功入队一个包后调用该回调函数，通知解码器继续解码
         if (getQueueSize(*demuxer->getPacketQueue(playbackStateVariables.demuxerStreamType)) <= demuxer->getMinPacketQueueSize(playbackStateVariables.demuxerStreamType))
             playbackStateVariables.threadStateManager.wakeUpById(ThreadIdentifier::Decoder);

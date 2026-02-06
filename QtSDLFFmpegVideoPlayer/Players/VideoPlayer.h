@@ -1,7 +1,7 @@
 #pragma once
 #include "PlayerPredefine.h"
 
-class VideoPlayer : public PlayerInterface, private ConcurrentQueueOps
+class VideoPlayer : public AbstractPlayer, private ConcurrentQueueOps
 {
 public:
     static constexpr int MAX_VIDEO_HARDWARE_EXTRA_FRAME_SIZE = 10; // 默认池为20，这里多加10，用于硬件解码时的额外帧缓冲区大小
@@ -86,15 +86,15 @@ public:// 这个区域用于定义公共类型
         }
     };
 
-    class VideoRenderEvent : public MediaEvent {
+    class VideoRenderEvent : public IMediaEvent {
         FrameContext* frameCtx{ nullptr };
     public:
         VideoRenderEvent(FrameContext* frameCtx)
-            : MediaEvent(MediaEventType::Render, StreamType::STVideo), frameCtx(frameCtx) {}
+            : IMediaEvent(MediaEventType::Render, StreamType::STVideo), frameCtx(frameCtx) {}
         virtual FrameContext* frameContext() const {
             return frameCtx;
         }
-        virtual UniquePtrD<MediaEvent> clone() const override {
+        virtual UniquePtrD<IMediaEvent> clone() const override {
             return std::make_unique<VideoRenderEvent>(*this);
         }
     };
@@ -108,7 +108,7 @@ private:
         ThreadStateManager threadStateManager;
         // 解复用器
         StreamType demuxerStreamType{ STREAM_TYPES };
-        Atomic<DemuxerInterface*> demuxer{ nullptr };
+        Atomic<AbstractDemuxer*> demuxer{ nullptr };
         AVFormatContext* formatCtx{ nullptr };
         StreamIndexType streamIndex{ -1 };
         ConcurrentQueue<AVPacket*>* packetQueue{ nullptr };
@@ -118,6 +118,13 @@ private:
         UniquePtr<AVCodecContext> codecCtx{ nullptr, constDeleterAVCodecContext };
         AVHWDeviceType hwDeviceType{ AV_HWDEVICE_TYPE_NONE };
         AVPixelFormat hwPixelFormat{ AV_PIX_FMT_NONE };
+        // 视频帧滤镜
+        StreamType filterGraphStreamType{ STREAM_TYPES };
+        UniquePtrD<FFmpegFrameFilterGraph> frameFilterGraph{ nullptr };
+
+        // 播放速率（倍速）
+        AtomicDouble speed{ 1.0 };
+
         // 时钟
         AtomicDouble videoClock{ 0.0 }; // 单位s
         AtomicBool isVideoClockStable{ false }; // 时钟是否稳定
@@ -143,7 +150,8 @@ private:
             hwPixelFormat = AV_PIX_FMT_NONE;
             videoClock.store(0.0);
             realtimeClock = 0.0;
-
+            if (frameFilterGraph)
+                frameFilterGraph->clearFilters();
             // 清空请求任务队列
             requestQueueHandler = nullptr;
             //requestQueueHandler.reset();
@@ -178,7 +186,7 @@ private:
     }
 
 public:
-    VideoPlayer() : PlayerInterface(logger) {
+    VideoPlayer() : AbstractPlayer(logger) {
         //logger.setLevel(LogLevel::trace);
     }
     ~VideoPlayer() {
@@ -264,20 +272,25 @@ public:
         }
     }
 
-    virtual void setMute(bool state) override {
-
-    }
+    virtual void setMute(bool state) override {}
     // 视频播放器不支持音频播放，因此始终返回true表示静音状态
-    virtual bool getMute() const override {
-        return true;
-    }
-    virtual void setVolume(double volume) override {
-
-    }
+    virtual bool getMute() const override { return true; }
+    virtual void setVolume(double volume) override {}
     // 视频播放器不支持音频播放，因此始终返回0.0表示无音量
-    virtual double getVolume() const override {
-        return 0.0;
+    virtual double getVolume() const override { return 0.0; }
+
+    virtual void setSpeed(double speed) override {
+        playbackStateVariables.speed.store(speed);
     }
+
+    virtual double getSpeed() const override {
+        return playbackStateVariables.speed.load();
+    }
+    virtual void setEqualizerState(bool enabled) {}
+    virtual void setEqualizerGains(const std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo>& gains) {}
+    virtual void setEqualizerGain(size_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) {}
+    virtual std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo> getEqualizerGains() const { return {}; }
+
 
     // \param streamIndex -1表示使用AV_TIME_BASE计算，否则使用streamIndex指定的流的time_base
     virtual void notifySeek(uint64_t pts, StreamIndexType streamIndex = -1) override {
@@ -377,13 +390,13 @@ public:
     }
 
 protected:
-    virtual bool event(MediaEvent* e) override {
+    virtual bool event(IMediaEvent* e) override {
         if (e->type() == MediaEventType::Render)
         {
             VideoRenderEvent* re = static_cast<VideoRenderEvent*>(e);
             renderEvent(re);
         }
-        return PlayerInterface::event(e);
+        return AbstractPlayer::event(e);
     }
     // 渲染事件处理函数（接口），子类可重写以实现自定义渲染逻辑
     virtual void renderEvent(VideoRenderEvent* e) {
@@ -493,11 +506,12 @@ private:
     
     // （如果包队列少于或等于某个最小值）通知解码器有新包到达
     void packetEnqueueCallback() { // 该函数内不能轻易使用playbackStateVariables中的packetQueue,formatCtx,streamIndex
-        DemuxerInterface* demuxer = nullptr;
+        AbstractDemuxer* demuxer = nullptr;
         if (demuxerMode == ComponentWorkMode::External)
             demuxer = externalDemuxer.get(); // 此时可用playbackStateVariablesz中的demuxer
         else
             demuxer = playbackStateVariables.demuxer.load(); // 此时可用playbackStateVariablesz中的demuxer
+        if (!demuxer) return;
         // 解复用器每次成功入队一个包后调用该回调函数，通知解码器继续解码
         if (getQueueSize(*demuxer->getPacketQueue(playbackStateVariables.demuxerStreamType)) <= demuxer->getMinPacketQueueSize(playbackStateVariables.demuxerStreamType))
             playbackStateVariables.threadStateManager.wakeUpById(ThreadIdentifier::Decoder);

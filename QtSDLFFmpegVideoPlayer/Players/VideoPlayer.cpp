@@ -301,9 +301,13 @@ void VideoPlayer::renderVideo()
     frameCtx.codecCtx = playbackStateVariables.codecCtx.get();
     frameCtx.streamIndex = playbackStateVariables.streamIndex;
 
-    //auto maxVideoFrameQueueSize = MAX_VIDEO_FRAME_QUEUE_SIZE;
-    //if (> maxVideoFrameQueueSize)
-    //    maxVideoFrameQueueSize = playbackStateVariables.codecCtx->;
+    
+    SharedPtr<IFrameFilter> noneFilter = std::make_shared<FFmpegFrameNoneFilter>(playbackStateVariables.filterGraphStreamType, playbackStateVariables.formatCtx, playbackStateVariables.codecCtx.get(), playbackStateVariables.streamIndex);
+    SharedPtr<IFFmpegFrameSpeedFilter> speedFilter = std::make_shared<FFmpegFrameVideoSpeedFilter>(playbackStateVariables.filterGraphStreamType, playbackStateVariables.formatCtx, playbackStateVariables.codecCtx.get(), playbackStateVariables.streamIndex, playbackStateVariables.speed);
+    UniquePtr<FFmpegFrameFilterGraph> filterGraph = std::make_unique<FFmpegFrameFilterGraph>(playbackStateVariables.filterGraphStreamType, playbackStateVariables.formatCtx, playbackStateVariables.codecCtx.get(), playbackStateVariables.streamIndex);
+    //filterGraph->addFilter(speedFilter);
+    //filterGraph->configureFilterGraph();
+    
     // 视频渲染循环
     while (true)
     {
@@ -483,9 +487,21 @@ void VideoPlayer::renderVideo()
             // 此前已经设置过了，因此此处不需要再设置为rawFrame，故注释掉
             //videoFrame = rawFrame.get();
         }
+        // 获取到软件帧（硬件帧->软件帧，或软件帧本身）后，使用滤波器处理得到最终帧
+        SharedPtr<AVFrame> filteredFrame{ nullptr };
+        speedFilter->setSpeed(playbackStateVariables.speed);
+        if (filterGraph->isValid())
+        {
+            filteredFrame = filterGraph->filter(videoFrame, IFrameFilter::SrcFlagKeepReference, IFrameFilter::SinkFlagNone);
+            if (!filteredFrame)
+                continue; // filter失败
+        }
+        else
+            filteredFrame = noneFilter->filter(videoFrame);
+
         // 帧解析完成，更新帧上下文
         frameCtx.hwRawFrame = isHardwareDecoded ? rawFrame.get() : nullptr;
-        frameCtx.swRawFrame = videoFrame;
+        frameCtx.swRawFrame = filteredFrame.get();
         //frameCtx.newFormatFrame = nullptr; // 后面如果格式转换成功会更新
         frameCtx.frameSwitchOptions = prevSwitchOptions;
         frameCtx.isHardwareDecoded = isHardwareDecoded;
@@ -531,11 +547,11 @@ void VideoPlayer::renderVideo()
             else
             {
                 if (isHardwareDecoded)
-                    hwSwsCtx.reset(checkAndGetCorrectSwsContext({ videoFrame->width, videoFrame->height }, hwTransferDstPixFormat, scaleSize, switchOptions.format, swsFlags));
+                    hwSwsCtx.reset(checkAndGetCorrectSwsContext({ filteredFrame->width, filteredFrame->height }, hwTransferDstPixFormat, scaleSize, switchOptions.format, swsFlags));
                 else
                 {
                     // 创建图像转换上下文, srcWidth,srcHeight,srcFormat,dstWidth,dstHeight,dstFormat
-                    swSwsCtx.reset(checkAndGetCorrectSwsContext({ videoFrame->width, videoFrame->height }, codecPixFmt, scaleSize, switchOptions.format, swsFlags));
+                    swSwsCtx.reset(checkAndGetCorrectSwsContext({ filteredFrame->width, filteredFrame->height }, codecPixFmt, scaleSize, switchOptions.format, swsFlags));
                 }
             }
         }
@@ -551,23 +567,23 @@ void VideoPlayer::renderVideo()
             if (swsCtx)
             {
                 // 转换像素格式
-                int outputSliceHeight = sws_scale(swsCtx, (const uint8_t* const*)videoFrame->data, videoFrame->linesize,
-                    0, videoFrame->height, switchedFrame->data, switchedFrame->linesize);
+                int outputSliceHeight = sws_scale(swsCtx, (const uint8_t* const*)filteredFrame->data, filteredFrame->linesize,
+                    0, filteredFrame->height, switchedFrame->data, switchedFrame->linesize);
                 // 复制属性信息
                 av_frame_copy_props(switchedFrame.get(), rawFrame.get());
                 //logger.trace("sws_scale: Output height: {}", outputSliceHeight);
-                switchedFrame->ch_layout = videoFrame->ch_layout;
+                switchedFrame->ch_layout = filteredFrame->ch_layout;
                 switchedFrame->width = scaleSize.width();
                 switchedFrame->height = scaleSize.height();
                 if (outputSliceHeight < 0)
                 {
-                    logger.error("Error converting the image from pixel format {} to {}", av_get_pix_fmt_name(static_cast<AVPixelFormat>(videoFrame->format)), av_get_pix_fmt_name(switchOptions.format));
+                    logger.error("Error converting the image from pixel format {} to {}", av_get_pix_fmt_name(static_cast<AVPixelFormat>(filteredFrame->format)), av_get_pix_fmt_name(switchOptions.format));
                     switchEnabled = false; // 转换失败，禁用转换，渲染时frameCtx.newFormatFrame将为nullptr
                 }
             }
             else
             {
-                logger.error("SwsContext is null, cannot convert the image from pixel format {} to {}", av_get_pix_fmt_name(static_cast<AVPixelFormat>(videoFrame->format)), av_get_pix_fmt_name(switchOptions.format));
+                logger.error("SwsContext is null, cannot convert the image from pixel format {} to {}", av_get_pix_fmt_name(static_cast<AVPixelFormat>(filteredFrame->format)), av_get_pix_fmt_name(switchOptions.format));
                 switchEnabled = false; // 转换失败，禁用转换，渲染时frameCtx.newFormatFrame将为nullptr
             }
         }

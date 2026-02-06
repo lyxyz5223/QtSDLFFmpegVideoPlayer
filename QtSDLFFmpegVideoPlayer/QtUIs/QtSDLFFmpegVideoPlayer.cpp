@@ -4,7 +4,7 @@
 #include <QFileDialog>
 #include "PlayListWidget.h"
 #include <QThread>
-#include "PlayOptionsWidget.h"
+#include "PlayerOptionsWidget.h"
 #ifdef USE_SDL_WIDGET
 #include "SDLApp.h"
 #elif defined(USE_QT_MULTIMEDIA_WIDGET)
@@ -62,6 +62,20 @@ QtSDLFFmpegVideoPlayer::QtSDLFFmpegVideoPlayer(QWidget* parent)
     // 绑定播放器控制按钮槽函数
     ui.playListDockWidgetContents->connect(ui.playListDockWidgetContents, &PlayListWidget::play, this, &QtSDLFFmpegVideoPlayer::playerPlayByPlayListIndex);
 
+    optionsWidget = new PlayerOptionsWidget(this);
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::stepBackLong, [&]() { playerStepBack(PLAYER_STEP_LONG_MS); });
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::stepBackShort, [&]() { playerStepBack(PLAYER_STEP_SHORT_MS); });
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::stepForwardLong, [&]() { playerStepForward(PLAYER_STEP_LONG_MS); });
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::stepForwardShort, this, [&]() { playerStepForward(PLAYER_STEP_SHORT_MS); });
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::playSpeedChange, this, &QtSDLFFmpegVideoPlayer::playerSetSpeed);
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::playSpeedReset, this, [&]() { playerSetSpeed(1.0); });
+    //optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::playerABLoopIntervalSideASet, this, &QtSDLFFmpegVideoPlayer::);
+    //optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::playerABLoopIntervalSideBSet, this, &QtSDLFFmpegVideoPlayer::);
+    //optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::playerABLoopIntervalRemove, this, &QtSDLFFmpegVideoPlayer::);
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::equalizerEnableStateChange, this, &QtSDLFFmpegVideoPlayer::playerSetEqualizerState);
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::equalizerGainChange, this, &QtSDLFFmpegVideoPlayer::playerSetEqualizerGain);
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::equalizerGainsChange, this, &QtSDLFFmpegVideoPlayer::playerSetEqualizerGains);
+    optionsWidget->setPlaySpeed(mediaPlayer.getSpeed());
 
     show();
     taskbarMediaController.addThumbBarButtons();
@@ -130,7 +144,7 @@ void QtSDLFFmpegVideoPlayer::selectUrlAndPlay()
 
 void QtSDLFFmpegVideoPlayer::openSettingsDialog()
 {
-
+    // 打开设置窗口（注：不是播放选项窗口，打开播放选项窗口是mediaOpenPlayOptionsDialog）
 }
 
 void QtSDLFFmpegVideoPlayer::mediaPlayPause()
@@ -156,11 +170,6 @@ void QtSDLFFmpegVideoPlayer::mediaNext()
     playerPlayByPlayListIndex(ui.playListDockWidgetContents->getNextPlayingIndex()); // 内部会自动设置当前播放项
 }
 
-void QtSDLFFmpegVideoPlayer::mediaSeek()
-{
-    logger.info("Seeking to: {} ms, duration: {} ms", mediaSeekingTime, duration);
-    mediaPlayer.seek(calcSeekTimeFromMs(mediaSeekingTime), -1);
-}
 
 void QtSDLFFmpegVideoPlayer::mediaSliderMoved(int value)
 {
@@ -175,7 +184,7 @@ void QtSDLFFmpegVideoPlayer::mediaSliderPressed()
 void QtSDLFFmpegVideoPlayer::mediaSliderReleased()
 {
     isMediaSliderMoving = false;
-    mediaSeek();
+    playerSeekTo(mediaSeekingTime);
 }
 void QtSDLFFmpegVideoPlayer::mediaSliderValueChanged(int value)
 {
@@ -203,8 +212,7 @@ void QtSDLFFmpegVideoPlayer::mediaVolumeSliderValueChanged(int value)
 
 void QtSDLFFmpegVideoPlayer::mediaOpenPlayOptionsDialog()
 {
-    PlayOptionsWidget optionsWidget(this);
-    optionsWidget.exec();
+    optionsWidget->show();
 }
 
 QString QtSDLFFmpegVideoPlayer::msToQString(uint64_t milliseconds)
@@ -224,9 +232,19 @@ QString QtSDLFFmpegVideoPlayer::getElidedString(QString str, int width, QFont fo
     return rst;
 }
 
-void QtSDLFFmpegVideoPlayer::beforePlaybackCallback(const AVFormatContext* formatCtx, const AVCodecContext* videoCodecCtx)
+void QtSDLFFmpegVideoPlayer::beforePlaybackCallback(AbstractPlayer::StreamType streamType, const AVFormatContext* formatCtx, const AVCodecContext* videoCodecCtx, AbstractPlayer::StreamIndexType streamIndex)
 {
-    this->duration = calcMsFromAVDuration(formatCtx->duration); // 转换为毫秒
+    auto dur = calcMsFromAVDuration(formatCtx->streams[streamIndex]->duration, formatCtx->streams[streamIndex]->time_base); // 转换为毫秒;;
+    if (this->duration < dur)
+    {
+        this->timeUpdateStream = streamType;
+        this->duration = dur;
+    }
+    else if (this->duration == 0)
+    {
+        this->timeUpdateStream = streamType;
+        this->duration = calcMsFromAVDuration(formatCtx->duration); // 转换为毫秒
+    }
     logger.info() << "Media Duration (ms):" << this->duration;
     QString elidedMediaName = getElidedString(ui.playListDockWidgetContents->getPlayListItem(ui.playListDockWidgetContents->getCurrentPlayingIndex()).title, ui.labelMediaName->width(), ui.labelMediaName->font()); // 设置媒体名称显示
     auto updateUI = [this, elidedMediaName] {
@@ -243,8 +261,11 @@ void QtSDLFFmpegVideoPlayer::beforePlaybackCallback(const AVFormatContext* forma
 }
 void QtSDLFFmpegVideoPlayer::videoRenderCallback(const MediaPlayer::VideoFrameContext& frameCtx)
 {
-    uint64_t currentTime = calcMsFromTimeStamp(frameCtx.swRawFrame->pts, frameCtx.formatCtx->streams[frameCtx.streamIndex]->time_base);
+    if (timeUpdateStream != AbstractPlayer::StreamType::STVideo)
+        return;
+    uint64_t currentTime = calcMsFromTimeStamp(frameCtx.swRawFrame->pts + frameCtx.swRawFrame->duration, frameCtx.formatCtx->streams[frameCtx.streamIndex]->time_base);
     uint64_t curTimeS = currentTime / 1000;
+    this->currentTimeMs = currentTime;
     if (this->currentTimeS == curTimeS || isMediaSliderMoving)
         return; // 秒级别未变化则不更新UI，或者用户正在拖动进度条则不更新UI
     this->currentTimeS = curTimeS;
@@ -261,8 +282,12 @@ void QtSDLFFmpegVideoPlayer::videoRenderCallback(const MediaPlayer::VideoFrameCo
 }
 void QtSDLFFmpegVideoPlayer::audioRenderCallback(const MediaPlayer::AudioFrameContext& frameCtx)
 {
-    uint64_t currentTime = frameCtx.frameTime * 1000;
+    if (timeUpdateStream != AbstractPlayer::StreamType::STAudio)
+        return;
+    uint64_t currentTime = frameCtx.frameTime * 1000 + (frameCtx.sampleRate > 0 ? (static_cast<double>(frameCtx.nFrames) / frameCtx.sampleRate * mediaPlayer.getSpeed()) : 0);
     uint64_t curTimeS = currentTime / 1000;
+    this->currentTimeMs = currentTime;
+    //logger.info("Update current time: {}ms", currentTime);
     if (this->currentTimeS == curTimeS || isMediaSliderMoving)
         return; // 秒级别未变化则不更新UI，或者用户正在拖动进度条则不更新UI
     this->currentTimeS = curTimeS;
@@ -326,5 +351,34 @@ void QtSDLFFmpegVideoPlayer::playerSetVolume(double volume)
 {
     mediaPlayer.setVolume(volume);
     mediaPlayer.setMute(volume <= 0);
+}
+
+void QtSDLFFmpegVideoPlayer::playerSetSpeed(double speed)
+{
+    mediaPlayer.setSpeed(speed);
+}
+
+void QtSDLFFmpegVideoPlayer::playerSeekTo(uint64_t milliseconds)
+{
+    logger.info("Seeking to: {} ms, duration: {} ms", milliseconds, this->duration.load());
+    mediaPlayer.seek(calcSeekTimeFromMs(milliseconds), -1);
+}
+
+void QtSDLFFmpegVideoPlayer::playerStepBack(uint64_t milliseconds)
+{
+    auto curTime = this->currentTimeMs.load();
+    if (curTime < milliseconds)
+        curTime = milliseconds;
+    playerSeekTo(curTime - milliseconds);
+}
+
+void QtSDLFFmpegVideoPlayer::playerStepForward(uint64_t milliseconds)
+{
+    auto curTime = this->currentTimeMs.load();
+    auto dur = this->duration.load();
+    auto seekTo = curTime + milliseconds;
+    if (seekTo > dur)
+        seekTo = dur;
+    playerSeekTo(seekTo);
 }
 

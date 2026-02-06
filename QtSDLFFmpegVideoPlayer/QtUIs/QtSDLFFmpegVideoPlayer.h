@@ -34,6 +34,7 @@ using TargetMediaPlayer = MediaPlayer;
 #endif
 
 
+class PlayerOptionsWidget;
 
 class QtSDLFFmpegVideoPlayer : public QMainWindow
 {
@@ -42,7 +43,9 @@ class QtSDLFFmpegVideoPlayer : public QMainWindow
     friend class QtSDLMediaPlayer;
     class QtSDLMediaPlayer : public TargetMediaPlayer {
         QtSDLFFmpegVideoPlayer& owner;
-        AtomicBool inited = false;
+        Mutex mtxInited;
+        AtomicBool aInited = false;
+        AtomicBool vInited = false;
         AtomicBool stopped = true;
         AtomicInt seekingCount{ 0 };
 
@@ -52,7 +55,10 @@ class QtSDLFFmpegVideoPlayer : public QMainWindow
         virtual void stopEvent(MediaPlaybackStateChangeEvent* e) override {
             TargetMediaPlayer::stopEvent(e);
             stopped.store(true);
-            inited.store(false); // 重置初始化状态
+            if (e->streamType() == StreamType::STAudio)
+                aInited.store(false); // 重置初始化状态
+            if (e->streamType() == StreamType::STVideo)
+                vInited.store(false); // 重置初始化状态
             owner.afterPlaybackCallback();
             owner.setPlayPauseButtonState(false);
         }
@@ -66,7 +72,10 @@ class QtSDLFFmpegVideoPlayer : public QMainWindow
         }
         virtual void startEvent(MediaPlaybackStateChangeEvent* e) override {
             TargetMediaPlayer::startEvent(e);
-            inited.store(false); // 重置初始化状态
+            if (e->streamType() == StreamType::STAudio)
+                aInited.store(false); // 重置初始化状态
+            if (e->streamType() == StreamType::STVideo)
+                vInited.store(false); // 重置初始化状态
             stopped.store(false);
             owner.setPlayPauseButtonState(true);
         }
@@ -94,12 +103,14 @@ class QtSDLFFmpegVideoPlayer : public QMainWindow
             if (stopped.load() || seekingCount.load() != 0)
                 return;
             auto ctx = e->frameContext();
-            if (!inited.load())
+            if (!vInited.load())
             {
                 if (stopped.load())
                     return;
-                inited.store(true);
-                owner.beforePlaybackCallback(ctx->formatCtx, ctx->codecCtx);
+                std::lock_guard lock(mtxInited);
+                if (!vInited.load())
+                    vInited.store(true);
+                owner.beforePlaybackCallback(e->streamType(), ctx->formatCtx, ctx->codecCtx, ctx->streamIndex);
             }
             // 转发渲染事件
             owner.videoRenderCallback(*ctx);
@@ -109,12 +120,14 @@ class QtSDLFFmpegVideoPlayer : public QMainWindow
             if (stopped.load() || seekingCount.load() != 0)
                 return;
             auto ctx = e->frameContext();
-            if (!inited.load())
+            if (!aInited.load())
             {
                 if (stopped.load())
                     return;
-                inited.store(true);
-                owner.beforePlaybackCallback(ctx->formatCtx, ctx->codecCtx);
+                std::lock_guard lock(mtxInited);
+                if (!aInited.load())
+                    aInited.store(true);
+                owner.beforePlaybackCallback(e->streamType(), ctx->formatCtx, ctx->codecCtx, ctx->streamIndex);
             }
             // 转发渲染事件
             owner.audioRenderCallback(*ctx);
@@ -148,7 +161,6 @@ public slots:
     void mediaPrevious();
     void mediaNext();
 
-    void mediaSeek();
 
 
     void mediaSliderMoved(int);
@@ -171,7 +183,10 @@ private:
     DefinePlayerLoggerSinks(qtSDLFFmpegVideoPlayerLoggerSinks, "QtSDLFFmpegVideoPlayer");
     Logger logger{ "QtSDLFFmpegVideoPlayer", qtSDLFFmpegVideoPlayerLoggerSinks };
 
+    PlayerOptionsWidget* optionsWidget{ nullptr };
+
     TaskbarMediaController taskbarMediaController;
+
 
     // SDL渲染窗口
 #ifdef USE_SDL_WIDGET
@@ -185,13 +200,20 @@ private:
 #endif
     QTimer* sdlEventTimer{ nullptr }; // SDL事件轮询定时器，只执行一次，回调中循环
     QtSDLMediaPlayer mediaPlayer{ *this }; // 媒体播放器实例
+    std::vector<AbstractPlayer::IFFmpegFrameAudioEqualizerFilter::BandInfo> mediaPlayerAudioEqualizerDefaultGains{ AbstractPlayer::FFmpegFrameAudio10BandEqualizerFilter::defaultBandGains() };
 
-    int64_t duration{ 0 }; // 媒体总时长，单位毫秒，滑块的int类型大约可以存储24.85513480324074074...天
-    int64_t currentTimeS{ 0 }; // 当前播放位置，单位秒
+    std::atomic<int64_t> duration{ 0 }; // 媒体总时长，单位毫秒，滑块的int类型大约可以存储24.85513480324074074...天
+    //std::atomic<int64_t> maxStreamDuration{ 0 }; // 媒体中某个流的总时长，单位毫秒
+    std::atomic<AbstractPlayer::StreamType> timeUpdateStream{ AbstractPlayer::StreamType::STNone }; // 用于ui时钟同步使用的流
+    std::atomic<int64_t> currentTimeMs{ 0 }; // 当前播放位置，单位秒
+    std::atomic<int64_t> currentTimeS{ 0 }; // 当前播放位置，单位秒
 
     // 
     std::atomic<bool> isMediaSliderMoving{ false };
-    int mediaSeekingTime{ 0 };
+    std::atomic<int> mediaSeekingTime{ 0 };
+
+    constexpr static size_t PLAYER_STEP_LONG_MS = 15000; // 15s
+    constexpr static size_t PLAYER_STEP_SHORT_MS = 5000; // 5s
 
     void createVideoWidget() {
 #ifdef USE_SDL_WIDGET
@@ -267,8 +289,11 @@ private:
         return pts * timeBase.num / (static_cast<double>(timeBase.den) / 1000);
     }
     // 根据总时间计算总时长/ms
-    static uint64_t calcMsFromAVDuration(uint64_t duration) {
-        return duration / (AV_TIME_BASE / 1000);
+    static uint64_t calcMsFromAVDuration(uint64_t duration, AVRational timeBase = AV_TIME_BASE_Q) {
+        if (timeBase.den / (double)timeBase.num == (double)AV_TIME_BASE) // 分母/分子>1
+            return duration / (AV_TIME_BASE / 1000);
+        else
+            return duration * av_q2d(timeBase) * 1000;
     }
     // 根据滑块值（当前播放时间/ms）计算要seek到的时间，单位微秒
     template <typename T>
@@ -281,7 +306,7 @@ private:
     static QString getElidedString(QString str, int width, QFont font);
 
     // 渲染第一帧的时候调用
-    void beforePlaybackCallback(const AVFormatContext* formatCtx, const AVCodecContext* videoCodecCtx);
+    void beforePlaybackCallback(AbstractPlayer::StreamType streamType, const AVFormatContext* formatCtx, const AVCodecContext* videoCodecCtx, AbstractPlayer::StreamIndexType streamIndex);
     // 每一帧渲染时调用
     void videoRenderCallback(const MediaPlayer::VideoFrameContext& frameCtx);
     void audioRenderCallback(const MediaPlayer::AudioFrameContext& frameCtx);
@@ -301,6 +326,24 @@ private:
 
     void playerSetVolume(double volume);
 
+    void playerSetSpeed(double speed);
 
+    void playerSeekTo(uint64_t milliseconds);
+
+    void playerStepBack(uint64_t milliseconds);
+    void playerStepForward(uint64_t milliseconds);
+
+    void playerSetEqualizerState(bool enabled) {
+        mediaPlayer.setEqualizerState(enabled);
+    }
+    void playerSetEqualizerGain(size_t bandIndex, double gain) {
+        mediaPlayer.setEqualizerGain(bandIndex, { mediaPlayerAudioEqualizerDefaultGains[bandIndex].frequency, gain });
+    }
+    void playerSetEqualizerGains(const std::vector<double>& gains) {
+        std::vector<AbstractPlayer::IFFmpegFrameAudioEqualizerFilter::BandInfo> newGains = mediaPlayer.getEqualizerGains();
+        for (size_t i = 0; i < gains.size(); ++i)
+            newGains[i].gain = gains[i];
+        mediaPlayer.setEqualizerGains(newGains);
+    }
 };
 

@@ -175,7 +175,7 @@
     <ClCompile Include="QtUIs\AnimatedMenuAction.cpp" />
     <ClCompile Include="QtUIs\PlayListListView.cpp" />
     <ClCompile Include="QtUIs\PlayListWidget.cpp" />
-    <ClCompile Include="QtUIs\PlayOptionsWidget.cpp" />
+    <ClCompile Include="QtUIs\PlayerOptionsWidget.cpp" />
     <ClCompile Include="QtUIs\QtSDLFFmpegVideoPlayer.cpp" />
     <ClCompile Include="QtUIs\RoundedIconButton.cpp" />
     <ClCompile Include="QtUIs\SDLWidget.cpp" />
@@ -205,7 +205,7 @@
     <QtMoc Include="QtUIs\PlayListListView.h" />
     <QtMoc Include="QtUIs\AnimatedMenuAction.h" />
     <ClInclude Include="QtUIs\AnimatedMenu.h" />
-    <QtMoc Include="QtUIs\PlayOptionsWidget.h" />
+    <QtMoc Include="QtUIs\PlayerOptionsWidget.h" />
     <ClInclude Include="QtUIs\SDLWidget.h" />
     <ClInclude Include="QtUIs\TaskbarMediaController.h" />
     <ClInclude Include="QtUtils\QtMediaPlayer.h" />
@@ -221,7 +221,7 @@
   </ItemGroup>
   <ItemGroup>
     <QtUic Include="QtUIs\PlayListWidget.ui" />
-    <QtUic Include="QtUIs\PlayOptionsWidget.ui" />
+    <QtUic Include="QtUIs\PlayerOptionsWidget.ui" />
     <QtUic Include="QtUIs\QtSDLFFmpegVideoPlayer.ui" />
   </ItemGroup>
   <ItemGroup>

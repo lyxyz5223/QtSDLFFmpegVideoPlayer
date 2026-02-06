@@ -337,21 +337,79 @@ void AudioPlayer::packet2AudioStreams()
     auto&& waitObj = threadStateManager.addThread(ThreadIdentifier::Decoder);
     ThreadStateManager::AutoRemovedThreadObj autoRemoveWaitObj{ threadStateManager, waitObj };
 
+    auto& filterGraphStreamType = playbackStateVariables.filterGraphStreamType;
+    auto& formatCtx = playbackStateVariables.formatCtx;
+    auto& codecCtx = playbackStateVariables.codecCtx;
+    auto& streamIndex = playbackStateVariables.streamIndex;
+
     AVRational timeBaseRational = playbackStateVariables.formatCtx->streams[playbackStateVariables.streamIndex]->time_base;
     double timeBase = av_q2d(timeBaseRational);
-    AVFrame* frame = av_frame_alloc();
-    //int64_t startTime = 0;
-    //bool started = false;
+    UniquePtr<AVFrame> frame = makeUniqueFrame();
 
     // 转换音频格式
     UniquePtr<AVFrame> convertedFrame = { nullptr, constDeleterAVFrame };
     // 使用swresample进行格式转换
     SwrContext* swr = nullptr;
-    SharedPtr<FrameFilter> noneFilter = std::make_shared<FFmpegFrameDefaultFilter>(playbackStateVariables.codecCtx.get());
-    SharedPtr<FFmpegFrameVolumeFilter> volumeFilter = std::make_shared<FFmpegFrameVolumeFilter>(playbackStateVariables.codecCtx.get(), playbackStateVariables.volume);
-    UniquePtr<FFmpegFrameFilterGraph> filterGraph = std::make_unique<FFmpegFrameFilterGraph>(playbackStateVariables.codecCtx.get());
+    AudioStreamInfo audioStreamInfo;
+    //std::vector<uint8_t> audioDataBuffer;
+    size_t bufferedAudioDataIdx = 0;
+
+    SharedPtr<IFrameFilter> noneFilter = std::make_shared<FFmpegFrameNoneFilter>(filterGraphStreamType, formatCtx, codecCtx.get(), streamIndex);
+    SharedPtr<IFFmpegFrameAudioEqualizerFilter> equalizerFilter = std::make_shared<FFmpegFrameAudio10BandEqualizerFilter>(filterGraphStreamType, formatCtx, codecCtx.get(), streamIndex);
+    SharedPtr<FFmpegFrameVolumeFilter> volumeFilter = std::make_shared<FFmpegFrameVolumeFilter>(filterGraphStreamType, formatCtx, codecCtx.get(), streamIndex, playbackStateVariables.volume);
+    SharedPtr<IFFmpegFrameSpeedFilter> speedFilter = std::make_shared<FFmpegFrameAudioSpeedFilter>(filterGraphStreamType, formatCtx, codecCtx.get(), streamIndex, playbackStateVariables.speed);
+    UniquePtr<FFmpegFrameFilterGraph> filterGraph = std::make_unique<FFmpegFrameFilterGraph>(filterGraphStreamType, formatCtx, codecCtx.get(), streamIndex);
+
+    filterGraph->addFilter(equalizerFilter);
     filterGraph->addFilter(volumeFilter);
+    if (playbackStateVariables.speed.load() != 1.0)
+        filterGraph->addFilter(speedFilter); // 默认1倍速，不需要该滤镜，否则需要添加滤镜
     filterGraph->configureFilterGraph();
+
+    auto audioDataEnqueue = [this, &audioStreamInfo] {
+        // data数组，如果是packed（交错）格式，则每个采样点的所有通道数据依次排列存储；
+        // 如果是planar（平面）格式，则每个通道的数据依次排列存储，通道1：data[0]，通道2：data[1]，依此类推
+        // 使用emplace减少一次vector构造拷贝
+        //audioStreamQueue.emplace((signed int*)convertedFrame->data[0], (signed int*)convertedFrame->data[0] + num);
+        if (audioStreamInfo.dataBytes.size())
+        {
+            //logger.info("Enqueue frame pts: {}", audioStreamInfo.pts);
+            enqueue(playbackStateVariables.streamQueue, std::move(audioStreamInfo));
+        }
+        //std::unique_lock lockMtxStreamQueue(playbackStateVariables.mtxStreamQueue);
+        //playbackStateVariables.streamQueue.emplace(std::move(vecAudioData), filteredFrame->pts, timeBaseRational, filteredFrame->pts * timeBase);
+        };
+    auto audioDataEnqueueHandler = [&audioDataEnqueue, &frame, &audioStreamInfo, &bufferedAudioDataIdx, &convertedFrame, &timeBase, &timeBaseRational] (uint8_t* audioData, size_t audioDataSize) {
+        // 溢出的音频数据
+        std::span<uint8_t> overflowAudioData{ audioData, audioDataSize };
+        while (!overflowAudioData.empty())
+        {
+            int dataSize = av_samples_get_buffer_size(nullptr, convertedFrame->ch_layout.nb_channels, convertedFrame->nb_samples, AUDIO_OUTPUT_FORMAT, 1);
+            if (!dataSize)
+                continue;
+            auto& audioDataBuffer = audioStreamInfo.dataBytes;
+            if (audioDataBuffer.empty())
+                audioDataBuffer.resize(static_cast<size_t>(dataSize), 0);
+            audioStreamInfo.pts = static_cast<uint64_t>(frame->pts);
+            audioStreamInfo.timeBase = timeBaseRational;
+            audioStreamInfo.frameTime = frame->pts * timeBase;
+            size_t toCopyCount = audioDataBuffer.size() - bufferedAudioDataIdx; // buffer剩余空间大小
+            if (toCopyCount >= overflowAudioData.size())
+                toCopyCount = overflowAudioData.size();
+            //else if (toCopyCount < overflowAudioData.size()) // 数据溢出
+            //{
+            //}
+            std::move(overflowAudioData.begin(), overflowAudioData.begin() + toCopyCount, audioDataBuffer.data() + bufferedAudioDataIdx); // 将音频数据写入AudioAdapter音频流队列
+            bufferedAudioDataIdx += toCopyCount;
+            overflowAudioData = overflowAudioData.subspan(toCopyCount);
+            if (bufferedAudioDataIdx == audioDataBuffer.size()) // 数据已满，准备入队
+            {
+                bufferedAudioDataIdx = 0;
+                // 数据足够，取出数据并入队
+                audioDataEnqueue();
+            }
+        }
+        };
 
     while (1)
     {
@@ -383,6 +441,7 @@ void AudioPlayer::packet2AudioStreams()
         AVPacket* pkt = nullptr;
         if (!tryDequeue(*playbackStateVariables.packetQueue, pkt))
         {
+            audioDataEnqueue(); // 没有包的时候先把残余数据入队，保证不会有数据遗漏
             waitObj.pause();
             continue; // 出队失败，说明队列为空
         }
@@ -393,18 +452,52 @@ void AudioPlayer::packet2AudioStreams()
         int aspRst = avcodec_send_packet(playbackStateVariables.codecCtx.get(), pkt);
         if (aspRst < 0 && aspRst != AVERROR(EAGAIN) && aspRst != AVERROR_EOF)
             continue;
-        while (avcodec_receive_frame(playbackStateVariables.codecCtx.get(), frame) == 0)
+        while (avcodec_receive_frame(playbackStateVariables.codecCtx.get(), frame.get()) == 0)
         {
+            //logger.info("Got frame pts: {}", frame->pts);
             SharedPtr<AVFrame> filteredFrame{ nullptr };
+            double oldSpeed = speedFilter->speed();
+            double speed = playbackStateVariables.speed.load();
+            double volume = playbackStateVariables.volume.load();
+            speedFilter->setSpeed(playbackStateVariables.speed);
             volumeFilter->setVolume(playbackStateVariables.volume);
+            equalizerFilter->setBandGains(playbackStateVariables.equalizerBandGains);
+            if (oldSpeed != speed && oldSpeed == 1.0)
+            {
+                // 从1x倍速改为变速
+                // 重建滤镜图
+                filterGraph->resetFilterGraph();
+                filterGraph->addFilter(speedFilter);
+                filterGraph->configureFilterGraph();
+                convertedFrame.reset();
+            }
+            else if (oldSpeed != speed && speed == 1.0)
+            {
+                // 1x取消倍速，防止音质受损
+                // 重建滤镜图
+                filterGraph->resetFilterGraph();
+                filterGraph->removeFilter(speedFilter.get());
+                filterGraph->configureFilterGraph();
+                convertedFrame.reset();
+            }
+            else if (oldSpeed > 2.0 && speed < 2.0)
+            {
+                // 重建滤镜图
+                filterGraph->resetFilterGraph();
+                filterGraph->configureFilterGraph();
+            }
             if (filterGraph->isValid())
             {
-                filteredFrame = filterGraph->filter(frame, FrameFilter::SrcFlagKeepReference, FrameFilter::SinkFlagNone);
+                AVFrame* ref = av_frame_alloc();
+                if (av_frame_ref(ref, frame.get()) < 0)
+                    ref = frame.get();
+                filteredFrame = filterGraph->filter(ref, IFrameFilter::SrcFlagKeepReference, IFrameFilter::SinkFlagNone);
+                av_frame_free(&ref);
                 if (!filteredFrame)
                     continue; // filter失败
             }
             else
-                filteredFrame = noneFilter->filter(frame);
+                filteredFrame = noneFilter->filter(frame.get());
             // 转换格式
             if (!convertedFrame)
             {
@@ -422,7 +515,7 @@ void AudioPlayer::packet2AudioStreams()
                 }
                 ret = swr_alloc_set_opts2(&swr,
                     // out
-                    &filteredFrame->ch_layout/*ch_layout*/, AUDIO_OUTPUT_FORMAT/*sample_fmt*/, filteredFrame->sample_rate, /*sample_rate*/
+                    &convertedFrame->ch_layout/*ch_layout*/, (AVSampleFormat)convertedFrame->format/*sample_fmt*/, convertedFrame->sample_rate, /*sample_rate*/
                     // in
                     &filteredFrame->ch_layout/*ch_layout*/, (AVSampleFormat)filteredFrame->format/*sample_fmt*/, filteredFrame->sample_rate, /*sample_rate*/
                     0, nullptr);
@@ -446,43 +539,15 @@ void AudioPlayer::packet2AudioStreams()
                 continue;
             }
             // 播放音频
-            int dataSize = av_samples_get_buffer_size(nullptr, convertedFrame->ch_layout.nb_channels, convertedFrame->nb_samples, AUDIO_OUTPUT_FORMAT, 1);
-            //std::vector<uint8_t> audioData(dataSize);
-            //memcpy(audioData.data(), convertedFrame->data[0], dataSize);
-            if (!dataSize)
-                continue;
-            // 将音频数据写入AudioAdapter音频流队列
-            auto* audioData = reinterpret_cast<uint8_t*>(convertedFrame->data[0]);
-            //std::span<uint8_t> spanAudioData{ audioData, static_cast<size_t>(dataSize) };
-            std::vector<uint8_t> vecAudioData(static_cast<size_t>(dataSize), 0);
-            std::copy(audioData, audioData + dataSize, vecAudioData.data());
-            // data数组，如果是packed（交错）格式，则每个采样点的所有通道数据依次排列存储；
-            // 如果是planar（平面）格式，则每个通道的数据依次排列存储，通道1：data[0]，通道2：data[1]，依此类推
-            // 使用emplace减少一次vector构造拷贝
-            //audioStreamQueue.emplace((signed int*)convertedFrame->data[0], (signed int*)convertedFrame->data[0] + num);
-            
-            //std::unique_lock lockMtxStreamQueue(playbackStateVariables.mtxStreamQueue);
-            
-            //auto oneSize = playbackStateVariables.numberOfAudioOutputChannels * sizeof(uint16_t);
-            //size_t count = dataSize / oneSize;
-            //for (size_t i = 0; i < count; ++i)
-            //{
-            //    AudioStreamInfo one{
-            //        {},
-            //        filteredFrame->pts * timeBase
-            //    };
-            //    for (size_t j = 0; j < oneSize; ++j)
-            //        one.dataBytes.push_back(audioData[i * oneSize + j]);
-            //    //enqueue(streamQueue, one);
-            //    playbackStateVariables.streamQueue.emplace(one);
-            //}
-
-            enqueue(playbackStateVariables.streamQueue, AudioStreamInfo{ std::move(vecAudioData), (uint64_t)filteredFrame->pts, timeBaseRational, filteredFrame->pts * timeBase });
-            //playbackStateVariables.streamQueue.emplace(std::move(vecAudioData), filteredFrame->pts, timeBaseRational, filteredFrame->pts * timeBase);
+            // 复制音频数据
+            audioDataEnqueueHandler(reinterpret_cast<uint8_t*>(convertedFrame->data[0]), static_cast<size_t>(ret) * filteredFrame->ch_layout.nb_channels * AUDIO_OUTPUT_FORMAT_BYTES_PER_SAMPLE);
+            // 获取缓冲区内的残余数据
+            ret = swr_convert(swr, convertedFrame->data, convertedFrame->nb_samples, 0, 0);
+            if (ret > 0)
+                audioDataEnqueueHandler(reinterpret_cast<uint8_t*>(convertedFrame->data[0]), static_cast<size_t>(ret) * filteredFrame->ch_layout.nb_channels * AUDIO_OUTPUT_FORMAT_BYTES_PER_SAMPLE);
         }
     }
     swr_free(&swr);
-    av_frame_free(&frame);
 }
 
 // 音频渲染

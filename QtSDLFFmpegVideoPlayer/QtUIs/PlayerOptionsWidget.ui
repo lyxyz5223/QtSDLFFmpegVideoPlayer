@@ -1,14 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>PlayOptionsClass</class>
- <widget class="QDialog" name="PlayOptionsClass">
+ <class>PlayerOptionsClass</class>
+ <widget class="QDialog" name="PlayerOptionsClass">
   <property name="geometry">
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>324</width>
-    <height>240</height>
+    <width>323</width>
+    <height>238</height>
    </rect>
+  </property>
+  <property name="focusPolicy">
+   <enum>Qt::FocusPolicy::StrongFocus</enum>
   </property>
   <property name="windowTitle">
    <string>PlayOptions</string>
@@ -32,7 +35,7 @@
    <item row="0" column="0">
     <widget class="QTabWidget" name="tabWidgetPlayOptions">
      <property name="currentIndex">
-      <number>0</number>
+      <number>2</number>
      </property>
      <property name="documentMode">
       <bool>true</bool>
@@ -77,7 +80,7 @@
           </spacer>
          </item>
          <item>
-          <widget class="QPushButton" name="pushButton">
+          <widget class="QPushButton" name="btnPlayerStepBackLong">
            <property name="text">
             <string/>
            </property>
@@ -85,16 +88,22 @@
             <iconset resource="../resources/QtSDLFFmpegVideoPlayer.qrc">
              <normaloff>:/svgs/svgs/fast-arrow-left.svg</normaloff>:/svgs/svgs/fast-arrow-left.svg</iconset>
            </property>
+           <property name="autoDefault">
+            <bool>false</bool>
+           </property>
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="pushButton_2">
+          <widget class="QPushButton" name="btnPlayerStepBackShort">
            <property name="text">
             <string/>
            </property>
            <property name="icon">
             <iconset resource="../resources/QtSDLFFmpegVideoPlayer.qrc">
              <normaloff>:/svgs/svgs/nav-arrow-left.svg</normaloff>:/svgs/svgs/nav-arrow-left.svg</iconset>
+           </property>
+           <property name="autoDefault">
+            <bool>false</bool>
            </property>
           </widget>
          </item>
@@ -106,7 +115,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="pushButton_3">
+          <widget class="QPushButton" name="btnPlayerStepForwardShort">
            <property name="text">
             <string/>
            </property>
@@ -114,16 +123,22 @@
             <iconset resource="../resources/QtSDLFFmpegVideoPlayer.qrc">
              <normaloff>:/svgs/svgs/nav-arrow-right.svg</normaloff>:/svgs/svgs/nav-arrow-right.svg</iconset>
            </property>
+           <property name="autoDefault">
+            <bool>false</bool>
+           </property>
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="pushButton_4">
+          <widget class="QPushButton" name="btnPlayerStepForwardLong">
            <property name="text">
             <string/>
            </property>
            <property name="icon">
             <iconset resource="../resources/QtSDLFFmpegVideoPlayer.qrc">
              <normaloff>:/svgs/svgs/fast-arrow-right.svg</normaloff>:/svgs/svgs/fast-arrow-right.svg</iconset>
+           </property>
+           <property name="autoDefault">
+            <bool>false</bool>
            </property>
           </widget>
          </item>
@@ -161,12 +176,61 @@
           </spacer>
          </item>
          <item>
-          <widget class="QDoubleSpinBox" name="doubleSpinBox">
+          <widget class="QDoubleSpinBox" name="doubleSpinBoxPlaySpeed">
            <property name="sizePolicy">
             <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
              <horstretch>0</horstretch>
              <verstretch>0</verstretch>
             </sizepolicy>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignmentFlag::AlignCenter</set>
+           </property>
+           <property name="correctionMode">
+            <enum>QAbstractSpinBox::CorrectionMode::CorrectToNearestValue</enum>
+           </property>
+           <property name="keyboardTracking">
+            <bool>false</bool>
+           </property>
+           <property name="suffix">
+            <string>x</string>
+           </property>
+           <property name="minimum">
+            <double>0.500000000000000</double>
+           </property>
+           <property name="maximum">
+            <double>100.000000000000000</double>
+           </property>
+           <property name="value">
+            <double>1.000000000000000</double>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btnPlaySpeedReset">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>35</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>35</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>重置</string>
+           </property>
+           <property name="autoDefault">
+            <bool>false</bool>
            </property>
           </widget>
          </item>
@@ -215,8 +279,17 @@
                  <verstretch>0</verstretch>
                 </sizepolicy>
                </property>
+               <property name="alignment">
+                <set>Qt::AlignmentFlag::AlignCenter</set>
+               </property>
+               <property name="keyboardTracking">
+                <bool>false</bool>
+               </property>
                <property name="displayFormat">
                 <string>HH:mm:ss</string>
+               </property>
+               <property name="calendarPopup">
+                <bool>true</bool>
                </property>
               </widget>
              </item>
@@ -237,6 +310,9 @@
                <property name="text">
                 <string>A</string>
                </property>
+               <property name="autoDefault">
+                <bool>false</bool>
+               </property>
               </widget>
              </item>
             </layout>
@@ -251,8 +327,17 @@
                  <verstretch>0</verstretch>
                 </sizepolicy>
                </property>
+               <property name="alignment">
+                <set>Qt::AlignmentFlag::AlignCenter</set>
+               </property>
+               <property name="keyboardTracking">
+                <bool>false</bool>
+               </property>
                <property name="displayFormat">
                 <string>HH:mm:ss</string>
+               </property>
+               <property name="calendarPopup">
+                <bool>true</bool>
                </property>
               </widget>
              </item>
@@ -272,6 +357,9 @@
                </property>
                <property name="text">
                 <string>B</string>
+               </property>
+               <property name="autoDefault">
+                <bool>false</bool>
                </property>
               </widget>
              </item>
@@ -294,6 +382,12 @@
              <verstretch>0</verstretch>
             </sizepolicy>
            </property>
+           <property name="minimumSize">
+            <size>
+             <width>35</width>
+             <height>35</height>
+            </size>
+           </property>
            <property name="maximumSize">
             <size>
              <width>35</width>
@@ -302,6 +396,9 @@
            </property>
            <property name="text">
             <string>解除</string>
+           </property>
+           <property name="autoDefault">
+            <bool>false</bool>
            </property>
           </widget>
          </item>
@@ -348,6 +445,9 @@
          <property name="text">
           <string>重置</string>
          </property>
+         <property name="autoDefault">
+          <bool>false</bool>
+         </property>
         </widget>
        </item>
        <item row="0" column="0">
@@ -374,6 +474,9 @@
         <widget class="QPushButton" name="btnResetVideoChromaticity">
          <property name="text">
           <string>重置</string>
+         </property>
+         <property name="autoDefault">
+          <bool>false</bool>
          </property>
         </widget>
        </item>
@@ -451,6 +554,9 @@
          <property name="text">
           <string>重置</string>
          </property>
+         <property name="autoDefault">
+          <bool>false</bool>
+         </property>
         </widget>
        </item>
        <item row="2" column="1">
@@ -496,6 +602,9 @@
         <widget class="QPushButton" name="btnResetVideoSaturation">
          <property name="text">
           <string>重置</string>
+         </property>
+         <property name="autoDefault">
+          <bool>false</bool>
          </property>
         </widget>
        </item>
@@ -558,14 +667,7 @@
           <property name="spacing">
            <number>0</number>
           </property>
-          <item row="0" column="0">
-           <widget class="QSlider" name="verticalSlider_12">
-            <property name="orientation">
-             <enum>Qt::Orientation::Vertical</enum>
-            </property>
-           </widget>
-          </item>
-          <item row="0" column="1">
+          <item row="1" column="1">
            <widget class="QSlider" name="verticalSlider_11">
             <property name="maximum">
              <number>100</number>
@@ -575,6 +677,51 @@
             </property>
             <property name="orientation">
              <enum>Qt::Orientation::Vertical</enum>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QSlider" name="verticalSlider_12">
+            <property name="orientation">
+             <enum>Qt::Orientation::Vertical</enum>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="0">
+           <widget class="QLabel" name="label_19">
+            <property name="font">
+             <font>
+              <pointsize>6</pointsize>
+             </font>
+            </property>
+            <property name="text">
+             <string>系统
+音量</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignmentFlag::AlignCenter</set>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QLabel" name="label_20">
+            <property name="font">
+             <font>
+              <pointsize>6</pointsize>
+             </font>
+            </property>
+            <property name="text">
+             <string>波形
+音量</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignmentFlag::AlignCenter</set>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
             </property>
            </widget>
           </item>
@@ -602,19 +749,19 @@
           <property name="spacing">
            <number>0</number>
           </property>
-          <item row="1" column="7">
+          <item row="1" column="7" colspan="3">
            <widget class="QTabWidget" name="tabWidgetEqualizerSchemes">
             <property name="minimumSize">
              <size>
               <width>22</width>
-              <height>0</height>
+              <height>20</height>
              </size>
             </property>
             <property name="tabPosition">
              <enum>QTabWidget::TabPosition::South</enum>
             </property>
             <property name="currentIndex">
-             <number>0</number>
+             <number>1</number>
             </property>
             <property name="documentMode">
              <bool>true</bool>
@@ -649,7 +796,7 @@
             </widget>
             <widget class="QWidget" name="Customize">
              <attribute name="title">
-              <string>自定义</string>
+              <string>自定义（10段均衡器）</string>
              </attribute>
              <layout class="QGridLayout" name="gridLayout_5" columnstretch="1,1,1,1,1,1,1,1,1,1">
               <property name="leftMargin">
@@ -668,18 +815,18 @@
                <number>0</number>
               </property>
               <item row="1" column="0">
-               <widget class="QSlider" name="verticalSlider">
+               <widget class="QSlider" name="verticalSlider_1">
                 <property name="minimum">
-                 <number>-2147483647</number>
+                 <number>-2000</number>
                 </property>
                 <property name="maximum">
-                 <number>2147483647</number>
+                 <number>2000</number>
                 </property>
                 <property name="singleStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -695,16 +842,16 @@
               <item row="1" column="1">
                <widget class="QSlider" name="verticalSlider_2">
                 <property name="minimum">
-                 <number>-2147483647</number>
+                 <number>-2000</number>
                 </property>
                 <property name="maximum">
-                 <number>2147483647</number>
+                 <number>2000</number>
                 </property>
                 <property name="singleStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -720,16 +867,16 @@
               <item row="1" column="2">
                <widget class="QSlider" name="verticalSlider_3">
                 <property name="minimum">
-                 <number>-2147483647</number>
+                 <number>-2000</number>
                 </property>
                 <property name="maximum">
-                 <number>2147483647</number>
+                 <number>2000</number>
                 </property>
                 <property name="singleStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -745,16 +892,16 @@
               <item row="1" column="3">
                <widget class="QSlider" name="verticalSlider_4">
                 <property name="minimum">
-                 <number>-2147483647</number>
+                 <number>-2000</number>
                 </property>
                 <property name="maximum">
-                 <number>2147483647</number>
+                 <number>2000</number>
                 </property>
                 <property name="singleStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -770,16 +917,16 @@
               <item row="1" column="4">
                <widget class="QSlider" name="verticalSlider_5">
                 <property name="minimum">
-                 <number>-2147483647</number>
+                 <number>-2000</number>
                 </property>
                 <property name="maximum">
-                 <number>2147483647</number>
+                 <number>2000</number>
                 </property>
                 <property name="singleStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -795,16 +942,16 @@
               <item row="1" column="5">
                <widget class="QSlider" name="verticalSlider_6">
                 <property name="minimum">
-                 <number>-2147483647</number>
+                 <number>-2000</number>
                 </property>
                 <property name="maximum">
-                 <number>2147483647</number>
+                 <number>2000</number>
                 </property>
                 <property name="singleStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -820,16 +967,16 @@
               <item row="1" column="6">
                <widget class="QSlider" name="verticalSlider_7">
                 <property name="minimum">
-                 <number>-2147483647</number>
+                 <number>-2000</number>
                 </property>
                 <property name="maximum">
-                 <number>2147483647</number>
+                 <number>2000</number>
                 </property>
                 <property name="singleStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -845,16 +992,16 @@
               <item row="1" column="7">
                <widget class="QSlider" name="verticalSlider_8">
                 <property name="minimum">
-                 <number>-2147483647</number>
+                 <number>-2000</number>
                 </property>
                 <property name="maximum">
-                 <number>2147483647</number>
+                 <number>2000</number>
                 </property>
                 <property name="singleStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -870,16 +1017,16 @@
               <item row="1" column="8">
                <widget class="QSlider" name="verticalSlider_9">
                 <property name="minimum">
-                 <number>-2147483647</number>
+                 <number>-2000</number>
                 </property>
                 <property name="maximum">
-                 <number>2147483647</number>
+                 <number>2000</number>
                 </property>
                 <property name="singleStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -895,16 +1042,16 @@
               <item row="1" column="9">
                <widget class="QSlider" name="verticalSlider_10">
                 <property name="minimum">
-                 <number>-2147483647</number>
+                 <number>-2000</number>
                 </property>
                 <property name="maximum">
-                 <number>2147483647</number>
+                 <number>2000</number>
                 </property>
                 <property name="singleStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>178956970</number>
+                 <number>100</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -1075,6 +1222,17 @@
               </item>
              </layout>
             </widget>
+            <widget class="QWidget" name="tab">
+             <attribute name="title">
+              <string>自定义（高级）</string>
+             </attribute>
+             <layout class="QGridLayout" name="gridLayout_10"/>
+            </widget>
+            <widget class="QWidget" name="tab_2">
+             <attribute name="title">
+              <string>自定义（滤镜参数）</string>
+             </attribute>
+            </widget>
            </widget>
           </item>
           <item row="0" column="7">
@@ -1083,6 +1241,19 @@
              <string>启用</string>
             </property>
            </widget>
+          </item>
+          <item row="0" column="8">
+           <spacer name="horizontalSpacer_8">
+            <property name="orientation">
+             <enum>Qt::Orientation::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>0</width>
+              <height>0</height>
+             </size>
+            </property>
+           </spacer>
           </item>
          </layout>
         </widget>
@@ -1113,5 +1284,387 @@
  <resources>
   <include location="../resources/QtSDLFFmpegVideoPlayer.qrc"/>
  </resources>
- <connections/>
+ <connections>
+  <connection>
+   <sender>btnPlayerStepBackLong</sender>
+   <signal>clicked()</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>playOptionStepBackLong()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>155</x>
+     <y>61</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>81</x>
+     <y>1</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnPlayerStepBackShort</sender>
+   <signal>clicked()</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>playOptionStepBackShort()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>205</x>
+     <y>61</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>184</x>
+     <y>1</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnPlayerStepForwardShort</sender>
+   <signal>clicked()</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>playOptionStepForwardShort()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>263</x>
+     <y>61</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>235</x>
+     <y>1</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnPlayerStepForwardLong</sender>
+   <signal>clicked()</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>playOptionStepForwardLong()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>312</x>
+     <y>61</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>219</x>
+     <y>1</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnPlaySpeedReset</sender>
+   <signal>clicked()</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>playOptionPlaySpeedReset()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>312</x>
+     <y>93</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>322</x>
+     <y>82</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>doubleSpinBoxPlaySpeed</sender>
+   <signal>valueChanged(double)</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>playOptionPlaySpeedChange(double)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>209</x>
+     <y>93</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>0</x>
+     <y>90</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnPlayerABLoopIntervalRemove</sender>
+   <signal>clicked()</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>playOptionPlayerABLoopIntervalRemove()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>312</x>
+     <y>148</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>322</x>
+     <y>134</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnPlayerABLoopIntervalSideA</sender>
+   <signal>clicked()</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>playOptionPlayerABLoopIntervalSideASet()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>260</x>
+     <y>127</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>322</x>
+     <y>107</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnPlayerABLoopIntervalSideB</sender>
+   <signal>clicked()</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>playOptionPlayerABLoopIntervalSideBSet()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>260</x>
+     <y>159</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>322</x>
+     <y>164</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>verticalSlider_1</sender>
+   <signal>valueChanged(int)</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>audioOptionEqualizerValue1Change(int)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>28</x>
+     <y>155</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>26</x>
+     <y>252</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>verticalSlider_2</sender>
+   <signal>valueChanged(int)</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>audioOptionEqualizerValue2Change(int)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>50</x>
+     <y>158</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>48</x>
+     <y>259</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>verticalSlider_3</sender>
+   <signal>valueChanged(int)</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>audioOptionEqualizerValue3Change(int)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>69</x>
+     <y>172</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>69</x>
+     <y>263</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>verticalSlider_4</sender>
+   <signal>valueChanged(int)</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>audioOptionEqualizerValue4Change(int)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>94</x>
+     <y>180</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>92</x>
+     <y>264</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>verticalSlider_5</sender>
+   <signal>valueChanged(int)</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>audioOptionEqualizerValue5Change(int)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>117</x>
+     <y>173</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>115</x>
+     <y>275</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>verticalSlider_6</sender>
+   <signal>valueChanged(int)</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>audioOptionEqualizerValue6Change(int)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>138</x>
+     <y>189</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>134</x>
+     <y>279</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>verticalSlider_7</sender>
+   <signal>valueChanged(int)</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>audioOptionEqualizerValue7Change(int)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>163</x>
+     <y>181</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>144</x>
+     <y>290</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>verticalSlider_8</sender>
+   <signal>valueChanged(int)</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>audioOptionEqualizerValue8Change(int)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>187</x>
+     <y>172</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>179</x>
+     <y>310</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>verticalSlider_9</sender>
+   <signal>valueChanged(int)</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>audioOptionEqualizerValue9Change(int)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>209</x>
+     <y>186</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>205</x>
+     <y>301</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>verticalSlider_10</sender>
+   <signal>valueChanged(int)</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>audioOptionEqualizerValue10Change(int)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>231</x>
+     <y>182</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>227</x>
+     <y>294</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>checkBoxEnableEqualizer</sender>
+   <signal>checkStateChanged(Qt::CheckState)</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>audioOptionEqualizerStateChange(Qt::CheckState)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>20</x>
+     <y>69</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>-45</x>
+     <y>68</y>
+    </hint>
+   </hints>
+  </connection>
+ </connections>
+ <slots>
+  <slot>playOptionStepBackLong()</slot>
+  <slot>playOptionStepBackShort()</slot>
+  <slot>playOptionStepForwardLong()</slot>
+  <slot>playOptionStepForwardShort()</slot>
+  <slot>playOptionPlaySpeedChange(double)</slot>
+  <slot>playOptionPlaySpeedReset()</slot>
+  <slot>playOptionPlayerABLoopIntervalSideASet()</slot>
+  <slot>playOptionPlayerABLoopIntervalSideBSet()</slot>
+  <slot>playOptionPlayerABLoopIntervalRemove()</slot>
+  <slot>slot1()</slot>
+  <slot>slot2()</slot>
+  <slot>slot3()</slot>
+  <slot>slot4()</slot>
+  <slot>slot5()</slot>
+  <slot>slot6()</slot>
+  <slot>slot7()</slot>
+  <slot>slot8()</slot>
+  <slot>slot9()</slot>
+  <slot>slot10()</slot>
+  <slot>slot11()</slot>
+  <slot>slot12()</slot>
+  <slot>slot13()</slot>
+  <slot>slot14()</slot>
+  <slot>slot15()</slot>
+  <slot>slot16()</slot>
+  <slot>slot17()</slot>
+  <slot>slot18()</slot>
+  <slot>slot19()</slot>
+  <slot>slot20()</slot>
+  <slot>slot21()</slot>
+  <slot>slot22()</slot>
+  <slot>slot23()</slot>
+  <slot>slot24()</slot>
+  <slot>slot25()</slot>
+  <slot>slot26()</slot>
+  <slot>slot27()</slot>
+  <slot>slot28()</slot>
+  <slot>slot29()</slot>
+  <slot>slot30()</slot>
+  <slot>slot31()</slot>
+  <slot>slot32()</slot>
+  <slot>slot33()</slot>
+  <slot>slot34()</slot>
+  <slot>slot35()</slot>
+  <slot>slot36()</slot>
+  <slot>slot37()</slot>
+  <slot>slot38()</slot>
+  <slot>slot39()</slot>
+  <slot>audioOptionEqualizerStateChange(Qt::CheckState)</slot>
+  <slot>audioOptionEqualizerValue1Change(int)</slot>
+  <slot>audioOptionEqualizerValue2Change(int)</slot>
+  <slot>audioOptionEqualizerValue3Change(int)</slot>
+  <slot>audioOptionEqualizerValue4Change(int)</slot>
+  <slot>audioOptionEqualizerValue5Change(int)</slot>
+  <slot>audioOptionEqualizerValue6Change(int)</slot>
+  <slot>audioOptionEqualizerValue7Change(int)</slot>
+  <slot>audioOptionEqualizerValue8Change(int)</slot>
+  <slot>audioOptionEqualizerValue9Change(int)</slot>
+  <slot>audioOptionEqualizerValue10Change(int)</slot>
+ </slots>
 </ui>

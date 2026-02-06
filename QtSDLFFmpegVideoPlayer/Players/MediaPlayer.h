@@ -4,7 +4,7 @@
 #include "VideoPlayer.h"
 #include "AudioPlayer.h"
 
-class MediaPlayer : public PlayerInterface
+class MediaPlayer : public AbstractPlayer
 {
 public:
     StreamTypes STREAM_TYPES = StreamType::STAll;
@@ -241,7 +241,7 @@ private:
         return false;
         };
 
-    //std::vector<UniquePtrD<PlayerInterface>> players{
+    //std::vector<UniquePtrD<AbstractPlayer>> players{
     //    std::make_unique<MediaVideoPlayer>(*this), // 视频播放器
     //    std::make_unique<MediaAudioPlayer>(*this)  // 音频播放器
     //}; // 播放器列表
@@ -337,7 +337,7 @@ private:
         return false;
     }
 public:
-    MediaPlayer() : PlayerInterface(logger) {
+    MediaPlayer() : AbstractPlayer(logger) {
         setDemuxerMode(demuxerMode); // setDemuxerMode方法设置音视频使用外部解复用器
         setExternalDemuxer(demuxer); // 设置外部解复用器，由MediaPlayer管理解复用器
         setRequestTaskQueueHandlerMode(requestTaskQueueHandlerMode); // 设置音视频使用外部请求任务队列处理器
@@ -422,6 +422,32 @@ public:
     // 视频播放器不支持音频播放，因此只需要考虑音频播放器的音量
     virtual double getVolume() const override {
         return audioPlayer->getVolume();
+    }
+    virtual void setSpeed(double speed) override {
+        execPlayerWithThreads({ [&] { videoPlayer->setSpeed(speed); }, [&] { audioPlayer->setSpeed(speed); } }, true);
+    }
+    virtual double getSpeed() const override {
+        double vs = videoPlayer->getSpeed();
+        double as = audioPlayer->getSpeed();
+        if (vs == as)
+            return as;
+        if (avSyncMode == AVSyncMode::VideoSyncToAudio)
+            return as;
+        else if (avSyncMode == AVSyncMode::AudioSyncToVideo)
+            return vs;
+        return 1.0; // 与系统时钟同步的速度为1.0
+    }
+    virtual void setEqualizerState(bool enabled) {
+        audioPlayer->setEqualizerState(enabled);
+    }
+    virtual void setEqualizerGains(const std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo>& gains) {
+        audioPlayer->setEqualizerGains(gains);
+    }
+    virtual void setEqualizerGain(size_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) {
+        audioPlayer->setEqualizerGain(bandIndex, gain);
+    }
+    virtual std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo> getEqualizerGains() const {
+        return audioPlayer->getEqualizerGains();
     }
 
     // 跳转到指定pts位置，非精确跳转，使用AVSEEK_FLAG_BACKWARD标志从pts向前(回退)查找最近的关键帧
@@ -539,7 +565,7 @@ public:
 
 
 protected:
-    virtual bool event(MediaEvent* e) override {
+    virtual bool event(IMediaEvent* e) override {
         // 分发事件
         if (e->type() == MediaEventType::Render)
         {
@@ -548,7 +574,7 @@ protected:
             if (e->streamType() & StreamType::STAudio)
                 audioRenderEvent(static_cast<AudioRenderEvent*>(e));
         }
-        return PlayerInterface::event(e);
+        return AbstractPlayer::event(e);
     }
 
     // 视频渲染事件

@@ -89,7 +89,7 @@
     <ClCompile Include="QtUIs\AnimatedMenu.cpp">
       <Filter>QtUIs</Filter>
     </ClCompile>
-    <ClCompile Include="QtUIs\PlayOptionsWidget.cpp">
+    <ClCompile Include="QtUIs\PlayerOptionsWidget.cpp">
       <Filter>QtUIs</Filter>
     </ClCompile>
     <ClCompile Include="QtUtils\QtMediaPlayer.cpp">
@@ -171,7 +171,7 @@
     <QtMoc Include="QtUIs\AnimatedMenuAction.h">
       <Filter>QtUIs</Filter>
     </QtMoc>
-    <QtMoc Include="QtUIs\PlayOptionsWidget.h">
+    <QtMoc Include="QtUIs\PlayerOptionsWidget.h">
       <Filter>QtUIs</Filter>
     </QtMoc>
   </ItemGroup>
@@ -182,7 +182,7 @@
     <QtUic Include="QtUIs\PlayListWidget.ui">
       <Filter>QtUIs\Form Files</Filter>
     </QtUic>
-    <QtUic Include="QtUIs\PlayOptionsWidget.ui">
+    <QtUic Include="QtUIs\PlayerOptionsWidget.ui">
       <Filter>QtUIs\Form Files</Filter>
     </QtUic>
   </ItemGroup>
