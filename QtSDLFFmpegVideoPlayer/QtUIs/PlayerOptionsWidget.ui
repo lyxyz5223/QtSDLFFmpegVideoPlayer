@@ -35,7 +35,7 @@
    <item row="0" column="0">
     <widget class="QTabWidget" name="tabWidgetPlayOptions">
      <property name="currentIndex">
-      <number>0</number>
+      <number>2</number>
      </property>
      <property name="documentMode">
       <bool>true</bool>
@@ -651,7 +651,10 @@
          <property name="title">
           <string>音量</string>
          </property>
-         <layout class="QGridLayout" name="gridLayout_7">
+         <layout class="QHBoxLayout" name="horizontalLayout_3">
+          <property name="spacing">
+           <number>0</number>
+          </property>
           <property name="leftMargin">
            <number>5</number>
           </property>
@@ -664,66 +667,122 @@
           <property name="bottomMargin">
            <number>5</number>
           </property>
-          <property name="spacing">
-           <number>0</number>
-          </property>
-          <item row="1" column="1">
-           <widget class="QSlider" name="verticalSlider_11">
-            <property name="maximum">
-             <number>100</number>
-            </property>
-            <property name="value">
-             <number>100</number>
-            </property>
-            <property name="orientation">
-             <enum>Qt::Orientation::Vertical</enum>
-            </property>
-           </widget>
+          <item>
+           <layout class="QVBoxLayout" name="verticalLayout_3">
+            <item>
+             <widget class="QLabel" name="label_19">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="font">
+               <font>
+                <pointsize>6</pointsize>
+               </font>
+              </property>
+              <property name="text">
+               <string>系
+统</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignmentFlag::AlignCenter</set>
+              </property>
+              <property name="wordWrap">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QSlider" name="verticalSliderSystemVolume">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Fixed" vsizetype="Expanding">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="maximum">
+               <number>100</number>
+              </property>
+              <property name="orientation">
+               <enum>Qt::Orientation::Vertical</enum>
+              </property>
+             </widget>
+            </item>
+           </layout>
           </item>
-          <item row="1" column="0">
-           <widget class="QSlider" name="verticalSlider_12">
-            <property name="orientation">
-             <enum>Qt::Orientation::Vertical</enum>
-            </property>
-           </widget>
-          </item>
-          <item row="0" column="0">
-           <widget class="QLabel" name="label_19">
-            <property name="font">
-             <font>
-              <pointsize>6</pointsize>
-             </font>
-            </property>
-            <property name="text">
-             <string>系统
-音量</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignmentFlag::AlignCenter</set>
-            </property>
-            <property name="wordWrap">
-             <bool>true</bool>
-            </property>
-           </widget>
-          </item>
-          <item row="0" column="1">
-           <widget class="QLabel" name="label_20">
-            <property name="font">
-             <font>
-              <pointsize>6</pointsize>
-             </font>
-            </property>
-            <property name="text">
-             <string>波形
-音量</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignmentFlag::AlignCenter</set>
-            </property>
-            <property name="wordWrap">
-             <bool>true</bool>
-            </property>
-           </widget>
+          <item>
+           <layout class="QVBoxLayout" name="verticalLayout_4">
+            <item>
+             <widget class="QLabel" name="label_20">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="font">
+               <font>
+                <pointsize>6</pointsize>
+               </font>
+              </property>
+              <property name="text">
+               <string>合成
+器</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignmentFlag::AlignCenter</set>
+              </property>
+              <property name="wordWrap">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QSlider" name="verticalSliderSystemMixerVolume">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Fixed" vsizetype="Expanding">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="maximum">
+               <number>100</number>
+              </property>
+              <property name="value">
+               <number>100</number>
+              </property>
+              <property name="orientation">
+               <enum>Qt::Orientation::Vertical</enum>
+              </property>
+             </widget>
+            </item>
+           </layout>
           </item>
          </layout>
         </widget>
@@ -1436,12 +1495,12 @@
    <slot>audioOptionEqualizerValue1Change(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>28</x>
-     <y>155</y>
+     <x>29</x>
+     <y>105</y>
     </hint>
     <hint type="destinationlabel">
      <x>26</x>
-     <y>252</y>
+     <y>238</y>
     </hint>
    </hints>
   </connection>
@@ -1452,12 +1511,12 @@
    <slot>audioOptionEqualizerValue2Change(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>50</x>
-     <y>158</y>
+     <x>52</x>
+     <y>105</y>
     </hint>
     <hint type="destinationlabel">
      <x>48</x>
-     <y>259</y>
+     <y>238</y>
     </hint>
    </hints>
   </connection>
@@ -1468,12 +1527,12 @@
    <slot>audioOptionEqualizerValue3Change(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>69</x>
-     <y>172</y>
+     <x>74</x>
+     <y>105</y>
     </hint>
     <hint type="destinationlabel">
      <x>69</x>
-     <y>263</y>
+     <y>238</y>
     </hint>
    </hints>
   </connection>
@@ -1484,12 +1543,12 @@
    <slot>audioOptionEqualizerValue4Change(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>94</x>
-     <y>180</y>
+     <x>98</x>
+     <y>105</y>
     </hint>
     <hint type="destinationlabel">
      <x>92</x>
-     <y>264</y>
+     <y>238</y>
     </hint>
    </hints>
   </connection>
@@ -1500,12 +1559,12 @@
    <slot>audioOptionEqualizerValue5Change(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>117</x>
-     <y>173</y>
+     <x>120</x>
+     <y>105</y>
     </hint>
     <hint type="destinationlabel">
      <x>115</x>
-     <y>275</y>
+     <y>238</y>
     </hint>
    </hints>
   </connection>
@@ -1516,12 +1575,12 @@
    <slot>audioOptionEqualizerValue6Change(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>138</x>
-     <y>189</y>
+     <x>144</x>
+     <y>105</y>
     </hint>
     <hint type="destinationlabel">
      <x>134</x>
-     <y>279</y>
+     <y>238</y>
     </hint>
    </hints>
   </connection>
@@ -1532,12 +1591,12 @@
    <slot>audioOptionEqualizerValue7Change(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>163</x>
-     <y>181</y>
+     <x>167</x>
+     <y>105</y>
     </hint>
     <hint type="destinationlabel">
      <x>144</x>
-     <y>290</y>
+     <y>238</y>
     </hint>
    </hints>
   </connection>
@@ -1548,12 +1607,12 @@
    <slot>audioOptionEqualizerValue8Change(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>187</x>
-     <y>172</y>
+     <x>189</x>
+     <y>105</y>
     </hint>
     <hint type="destinationlabel">
      <x>179</x>
-     <y>310</y>
+     <y>238</y>
     </hint>
    </hints>
   </connection>
@@ -1564,12 +1623,12 @@
    <slot>audioOptionEqualizerValue9Change(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>209</x>
-     <y>186</y>
+     <x>213</x>
+     <y>105</y>
     </hint>
     <hint type="destinationlabel">
      <x>205</x>
-     <y>301</y>
+     <y>238</y>
     </hint>
    </hints>
   </connection>
@@ -1580,12 +1639,12 @@
    <slot>audioOptionEqualizerValue10Change(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>231</x>
-     <y>182</y>
+     <x>235</x>
+     <y>105</y>
     </hint>
     <hint type="destinationlabel">
      <x>227</x>
-     <y>294</y>
+     <y>238</y>
     </hint>
    </hints>
   </connection>
@@ -1597,11 +1656,171 @@
    <hints>
     <hint type="sourcelabel">
      <x>20</x>
-     <y>69</y>
+     <y>59</y>
     </hint>
     <hint type="destinationlabel">
-     <x>-45</x>
-     <y>68</y>
+     <x>0</x>
+     <y>69</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>horizontalSliderVideoBrightness</sender>
+   <signal>valueChanged(int)</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>videoOptionVideoBrightnessChange(int)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>172</x>
+     <y>48</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>0</x>
+     <y>52</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>horizontalSliderVideoChromaticity</sender>
+   <signal>valueChanged(int)</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>videoOptionVideoChromaticityChange(int)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>180</x>
+     <y>138</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>0</x>
+     <y>140</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>horizontalSliderVideoSaturation</sender>
+   <signal>valueChanged(int)</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>videoOptionVideoSaturationChange(int)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>157</x>
+     <y>105</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>0</x>
+     <y>111</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>horizontalSliderVideoContrast</sender>
+   <signal>valueChanged(int)</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>videoOptionVideoContrastChange(int)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>149</x>
+     <y>82</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>0</x>
+     <y>80</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnResetVideoBrightness</sender>
+   <signal>clicked()</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>videoOptionVideoBrightnessReset()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>290</x>
+     <y>47</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>322</x>
+     <y>49</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnResetVideoContrast</sender>
+   <signal>clicked()</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>videoOptionVideoContrastReset()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>299</x>
+     <y>73</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>322</x>
+     <y>62</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnResetVideoSaturation</sender>
+   <signal>clicked()</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>videoOptionVideoSaturationReset()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>277</x>
+     <y>102</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>322</x>
+     <y>94</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>btnResetVideoChromaticity</sender>
+   <signal>clicked()</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>videoOptionVideoChromaticityReset()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>304</x>
+     <y>129</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>322</x>
+     <y>144</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>verticalSliderSystemMixerVolume</sender>
+   <signal>valueChanged(int)</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>audioOptionSystemMixerVolumeChange(int)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>305</x>
+     <y>161</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>322</x>
+     <y>238</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>verticalSliderSystemVolume</sender>
+   <signal>valueChanged(int)</signal>
+   <receiver>PlayerOptionsClass</receiver>
+   <slot>audioOptionSystemVolumeChange(int)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>282</x>
+     <y>154</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>264</x>
+     <y>238</y>
     </hint>
    </hints>
   </connection>
@@ -1616,14 +1835,14 @@
   <slot>playOptionPlayerABLoopIntervalSideASet()</slot>
   <slot>playOptionPlayerABLoopIntervalSideBSet()</slot>
   <slot>playOptionPlayerABLoopIntervalRemove()</slot>
-  <slot>slot1()</slot>
-  <slot>slot2()</slot>
-  <slot>slot3()</slot>
-  <slot>slot4()</slot>
-  <slot>slot5()</slot>
-  <slot>slot6()</slot>
-  <slot>slot7()</slot>
-  <slot>slot8()</slot>
+  <slot>videoOptionVideoBrightnessChange(int)</slot>
+  <slot>videoOptionVideoChromaticityChange(int)</slot>
+  <slot>videoOptionVideoContrastChange(int)</slot>
+  <slot>videoOptionVideoSaturationChange(int)</slot>
+  <slot>videoOptionVideoBrightnessReset()</slot>
+  <slot>videoOptionVideoChromaticityReset()</slot>
+  <slot>videoOptionVideoContrastReset()</slot>
+  <slot>videoOptionVideoSaturationReset()</slot>
   <slot>slot9()</slot>
   <slot>slot10()</slot>
   <slot>slot11()</slot>
@@ -1666,5 +1885,7 @@
   <slot>audioOptionEqualizerValue8Change(int)</slot>
   <slot>audioOptionEqualizerValue9Change(int)</slot>
   <slot>audioOptionEqualizerValue10Change(int)</slot>
+  <slot>audioOptionSystemMixerVolumeChange(int)</slot>
+  <slot>audioOptionSystemVolumeChange(int)</slot>
  </slots>
 </ui>

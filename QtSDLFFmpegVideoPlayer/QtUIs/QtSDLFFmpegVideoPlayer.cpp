@@ -66,11 +66,38 @@ QtSDLFFmpegVideoPlayer::QtSDLFFmpegVideoPlayer(QWidget* parent)
     //optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::playerABLoopIntervalSideASet, this, &QtSDLFFmpegVideoPlayer::);
     //optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::playerABLoopIntervalSideBSet, this, &QtSDLFFmpegVideoPlayer::);
     //optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::playerABLoopIntervalRemove, this, &QtSDLFFmpegVideoPlayer::);
+
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoBrightnessChange, this, &QtSDLFFmpegVideoPlayer::playerSetBrightness);
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoContrastChange, this, &QtSDLFFmpegVideoPlayer::playerSetContrast);
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoSaturationChange, this, &QtSDLFFmpegVideoPlayer::playerSetSaturation);
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoChromaticityChange, this, &QtSDLFFmpegVideoPlayer::playerSetChromaticity);
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoBrightnessReset, this, [&] { playerSetBrightness(0); });
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoContrastReset, this, [&] { playerSetContrast(0); });
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoSaturationReset, this, [&] { playerSetSaturation(0); });
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoChromaticityReset, this, [&] { playerSetChromaticity(0); });
+
     optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::equalizerEnableStateChange, this, &QtSDLFFmpegVideoPlayer::playerSetEqualizerState);
     optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::equalizerGainChange, this, &QtSDLFFmpegVideoPlayer::playerSetEqualizerGain);
     optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::equalizerGainsChange, this, &QtSDLFFmpegVideoPlayer::playerSetEqualizerGains);
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::systemMixerVolumeChange, this, &QtSDLFFmpegVideoPlayer::systemMixerSetVolume);
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::systemVolumeChange, this, &QtSDLFFmpegVideoPlayer::systemSetVolume);
+
+
     optionsWidget->setPlaySpeed(mediaPlayer.getSpeed());
     optionsWidget->setEqualizerEnabled(mediaPlayer.getEqualizerState());
+
+    systemVolumeController.setVolumeChangeCallback([this] (ISystemVolumeController::VolumeDeviceType type, float volume, bool muted) {
+        if (type == SystemVolumeController::Master)
+        {
+            optionsWidget->setSystemVolumeUI(volume);
+        }
+        else if (type == SystemVolumeController::Mixer)
+        {
+            optionsWidget->setSystemMixerVolumeUI(volume); 
+        }
+        });
+    auto initVol = systemVolumeController.getSystemMasterVolume();
+    optionsWidget->setSystemVolumeUI(initVol);
 
     videoPreviewThumbnailWidget = new QLabel(this);
     videoPreviewThumbnailWidget->setWindowFlag(Qt::FramelessWindowHint, true);
@@ -527,5 +554,25 @@ void QtSDLFFmpegVideoPlayer::playerStepForward(uint64_t milliseconds)
     if (seekTo > dur)
         seekTo = dur;
     playerSeekTo(seekTo);
+}
+
+void QtSDLFFmpegVideoPlayer::systemSetVolume(int value)
+{
+#ifdef _WIN32
+    double volume = getVolumeFromUIValue(value);
+    systemVolumeController.setSystemMasterVolume(volume);
+#else
+#error "System volume control is only implemented for Windows. You can implement it for other platforms using their respective APIs."
+#endif
+}
+
+void QtSDLFFmpegVideoPlayer::systemMixerSetVolume(int value)
+{
+#ifdef _WIN32
+    double volume = getVolumeFromUIValue(value);
+    systemVolumeController.setSystemMixerVolume(volume);
+#else
+#error "System volume control is only implemented for Windows. You can implement it for other platforms using their respective APIs."
+#endif
 }
 

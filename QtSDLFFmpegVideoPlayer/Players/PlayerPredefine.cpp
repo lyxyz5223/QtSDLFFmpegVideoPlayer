@@ -907,7 +907,7 @@ void PlayerTypes::threadBlocker(Logger& logger, const std::vector<ThreadIdentifi
             tsc.setBlockedAndWaitChanged(true);
         }
         catch (std::exception e) {
-            logger.error("{}", e.what());
+            logger.warning("{}", e.what());
         }
     }
 }

@@ -9,9 +9,6 @@
       <UniqueIdentifier>{639EADAA-A684-42e4-A9AD-28FC9BCB8F7C}</UniqueIdentifier>
       <Extensions>ts</Extensions>
     </Filter>
-    <Filter Include="AudioAdapter">
-      <UniqueIdentifier>{c85f0962-24fc-4eba-9f55-59596da50a02}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Players">
       <UniqueIdentifier>{76a323c8-8759-424d-9095-12b35ccd0f72}</UniqueIdentifier>
     </Filter>
@@ -42,13 +39,22 @@
     <Filter Include="QtUtils">
       <UniqueIdentifier>{67d75128-b055-42bb-b2ff-10e0465a3280}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Audio">
+      <UniqueIdentifier>{285ae709-347a-4d52-8caa-3991e212d198}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Audio\AudioAdapter">
+      <UniqueIdentifier>{c85f0962-24fc-4eba-9f55-59596da50a02}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Audio\VolumeController">
+      <UniqueIdentifier>{b7517f59-60b4-43d1-942e-e634fe94510a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Logger">
+      <UniqueIdentifier>{79995ab2-7236-4268-919b-28dab4d51b33}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
       <Filter>1Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="AudioAdapter\AudioAdapter.cpp">
-      <Filter>AudioAdapter</Filter>
     </ClCompile>
     <ClCompile Include="Players\AudioPlayer.cpp">
       <Filter>Players</Filter>
@@ -98,17 +104,17 @@
     <ClCompile Include="QtUIs\TaskbarMediaController.cpp">
       <Filter>QtUIs</Filter>
     </ClCompile>
+    <ClCompile Include="Audio\VolumeController\SystemVolumeController.cpp">
+      <Filter>Audio\VolumeController</Filter>
+    </ClCompile>
+    <ClCompile Include="Audio\AudioAdapter\AudioAdapter.cpp">
+      <Filter>Audio\AudioAdapter</Filter>
+    </ClCompile>
+    <ClCompile Include="Audio\VolumeController\Win32SystemVolumeController.cpp">
+      <Filter>Audio\VolumeController</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="AudioAdapter\AudioAdapter.h">
-      <Filter>AudioAdapter</Filter>
-    </ClInclude>
-    <ClInclude Include="AudioAdapter\PortAudioAdapter.h">
-      <Filter>AudioAdapter</Filter>
-    </ClInclude>
-    <ClInclude Include="AudioAdapter\RtAudioAdapter.h">
-      <Filter>AudioAdapter</Filter>
-    </ClInclude>
     <ClInclude Include="Players\AudioPlayer.h">
       <Filter>Players</Filter>
     </ClInclude>
@@ -153,6 +159,27 @@
     </ClInclude>
     <ClInclude Include="QtUIs\TaskbarMediaController.h">
       <Filter>QtUIs</Filter>
+    </ClInclude>
+    <ClInclude Include="Audio\VolumeController\SystemVolumeController.h">
+      <Filter>Audio\VolumeController</Filter>
+    </ClInclude>
+    <ClInclude Include="Audio\AudioAdapter\AudioAdapter.h">
+      <Filter>Audio\AudioAdapter</Filter>
+    </ClInclude>
+    <ClInclude Include="Audio\AudioAdapter\PortAudioAdapter.h">
+      <Filter>Audio\AudioAdapter</Filter>
+    </ClInclude>
+    <ClInclude Include="Audio\AudioAdapter\RtAudioAdapter.h">
+      <Filter>Audio\AudioAdapter</Filter>
+    </ClInclude>
+    <ClInclude Include="Audio\VolumeController\Win32SystemVolumeController.h">
+      <Filter>Audio\VolumeController</Filter>
+    </ClInclude>
+    <ClInclude Include="Logger\LoggerPredefine.h">
+      <Filter>Logger</Filter>
+    </ClInclude>
+    <ClInclude Include="Utils\COMUtils.h">
+      <Filter>Utils</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

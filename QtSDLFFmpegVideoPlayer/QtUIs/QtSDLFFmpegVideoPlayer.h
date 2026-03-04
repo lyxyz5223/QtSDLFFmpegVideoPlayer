@@ -4,10 +4,13 @@
 #include "ui_QtSDLFFmpegVideoPlayer.h"
 #include <thread>
 #include <QList>
-
+#include <LoggerPredefine.h>
 
 // Windows任务栏媒体控制集成
 #include "TaskbarMediaController.h"
+// 系统音量调节
+#include <SystemVolumeController.h>
+
 // 处理视频预览缩略图
 #include <opencv2/opencv.hpp>
 
@@ -183,12 +186,13 @@ private:
 
     // 日志记录
     const std::string loggerName{ "QtSDLFFmpegVideoPlayer" };
-    DefinePlayerLoggerSinks(qtSDLFFmpegVideoPlayerLoggerSinks, loggerName);
+    DefineLoggerSinks(qtSDLFFmpegVideoPlayerLoggerSinks, loggerName);
     Logger logger{ loggerName, qtSDLFFmpegVideoPlayerLoggerSinks };
 
     PlayerOptionsWidget* optionsWidget{ nullptr };
 
     TaskbarMediaController taskbarMediaController;
+    SystemVolumeController systemVolumeController;
 
     QLabel* videoPreviewThumbnailWidget{ nullptr };
     // 预览解码器
@@ -380,5 +384,25 @@ private:
             newGains[i].gain = gains[i];
         mediaPlayer.setEqualizerGains(newGains);
     }
+
+    void playerSetBrightness(int value) {
+        //mediaPlayer.setBrightness(value);
+    }
+
+    void playerSetContrast(int value) {
+        //mediaPlayer.setContrast(value);
+    }
+
+    void playerSetSaturation(int value) {
+        //mediaPlayer.setSaturation(value);
+    }
+
+    void playerSetChromaticity(int value) {
+        //mediaPlayer.setChromaticity(value);
+    }
+
+    void systemSetVolume(int value);
+    void systemMixerSetVolume(int value);
+
 };
 

@@ -242,6 +242,7 @@ private:
         }
         else
         {
+            if (streamIndex < 0) return false;
             // 固定间隔播放
             double timeBase = av_q2d(formatCtx->streams[streamIndex]->time_base);
             double frameDuration = timeBase; // 备用方案：使用时间基计算

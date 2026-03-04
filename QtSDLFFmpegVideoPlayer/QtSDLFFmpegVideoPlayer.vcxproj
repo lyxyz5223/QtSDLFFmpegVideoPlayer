@@ -80,7 +80,7 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
-    <IncludePath>.\Utils;.\Players;.\SDLUtils;.\AudioAdapter;.\QtUtils;$(IncludePath)</IncludePath>
+    <IncludePath>.\Utils;.\Players;.\SDLUtils;.\QtUtils;.\Audio\AudioAdapter;.\Audio\VolumeController;.\Logger;$(IncludePath)</IncludePath>
     <LibraryPath>$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Windows 7|x64'">
@@ -88,7 +88,7 @@
     <LibraryPath>$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
-    <IncludePath>.\Utils;.\Players;.\SDLUtils;.\AudioAdapter;.\QtUtils;$(IncludePath)</IncludePath>
+    <IncludePath>.\Utils;.\Players;.\SDLUtils;.\QtUtils;.\Audio\AudioAdapter;.\Audio\VolumeController;$(IncludePath)</IncludePath>
     <LibraryPath>$(LibraryPath)</LibraryPath>
     <CopyCppRuntimeToOutputDir>true</CopyCppRuntimeToOutputDir>
   </PropertyGroup>
@@ -167,6 +167,9 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Audio\AudioAdapter\AudioAdapter.cpp" />
+    <ClCompile Include="Audio\VolumeController\SystemVolumeController.cpp" />
+    <ClCompile Include="Audio\VolumeController\Win32SystemVolumeController.cpp" />
     <ClCompile Include="Players\AudioPlayer.cpp" />
     <ClCompile Include="Players\MediaPlayer.cpp" />
     <ClCompile Include="Players\PlayerPredefine.cpp" />
@@ -190,13 +193,15 @@
     <ClCompile Include="QtUtils\QtMediaPlayer.cpp" />
     <ClCompile Include="SDLUtils\SDLApp.cpp" />
     <ClCompile Include="SDLUtils\SDLMediaPlayer.cpp" />
-    <ClCompile Include="AudioAdapter\AudioAdapter.cpp" />
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="AudioAdapter\AudioAdapter.h" />
-    <ClInclude Include="AudioAdapter\PortAudioAdapter.h" />
-    <ClInclude Include="AudioAdapter\RtAudioAdapter.h" />
+    <ClInclude Include="Audio\AudioAdapter\AudioAdapter.h" />
+    <ClInclude Include="Audio\AudioAdapter\PortAudioAdapter.h" />
+    <ClInclude Include="Audio\AudioAdapter\RtAudioAdapter.h" />
+    <ClInclude Include="Audio\VolumeController\SystemVolumeController.h" />
+    <ClInclude Include="Audio\VolumeController\Win32SystemVolumeController.h" />
+    <ClInclude Include="Logger\LoggerPredefine.h" />
     <ClInclude Include="Players\AudioPlayer.h" />
     <ClInclude Include="Players\MediaPlayer.h" />
     <ClInclude Include="Players\PlayerPredefine.h" />
@@ -213,6 +218,7 @@
     <ClInclude Include="SDLUtils\SDLApp.h" />
     <ClInclude Include="SDLUtils\SDLMediaPlayer.h" />
     <ClInclude Include="Utils\AtomicWaitObject.h" />
+    <ClInclude Include="Utils\COMUtils.h" />
     <ClInclude Include="Utils\EnumDefine.h" />
     <ClInclude Include="Utils\MultiEnumTypeDefine.h" />
     <ClInclude Include="Utils\ThreadUtils.h" />
