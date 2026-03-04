@@ -63,6 +63,12 @@
         <verstretch>0</verstretch>
        </sizepolicy>
       </property>
+      <property name="mouseTracking">
+       <bool>true</bool>
+      </property>
+      <property name="tabletTracking">
+       <bool>true</bool>
+      </property>
       <property name="tracking">
        <bool>false</bool>
       </property>
@@ -507,8 +513,8 @@
    <slot>mediaSliderMoved(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>48</x>
-     <y>356</y>
+     <x>57</x>
+     <y>382</y>
     </hint>
     <hint type="destinationlabel">
      <x>27</x>
@@ -523,8 +529,8 @@
    <slot>mediaSliderPressed()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>65</x>
-     <y>356</y>
+     <x>74</x>
+     <y>382</y>
     </hint>
     <hint type="destinationlabel">
      <x>50</x>
@@ -539,8 +545,8 @@
    <slot>mediaSliderReleased()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>97</x>
-     <y>356</y>
+     <x>106</x>
+     <y>382</y>
     </hint>
     <hint type="destinationlabel">
      <x>75</x>
@@ -555,8 +561,8 @@
    <slot>mediaSliderValueChanged(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>121</x>
-     <y>356</y>
+     <x>130</x>
+     <y>382</y>
     </hint>
     <hint type="destinationlabel">
      <x>108</x>
@@ -571,8 +577,8 @@
    <slot>mediaPlayPause()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>188</x>
-     <y>406</y>
+     <x>235</x>
+     <y>432</y>
     </hint>
     <hint type="destinationlabel">
      <x>213</x>
@@ -587,8 +593,8 @@
    <slot>mediaStop()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>222</x>
-     <y>406</y>
+     <x>269</x>
+     <y>432</y>
     </hint>
     <hint type="destinationlabel">
      <x>279</x>
@@ -603,8 +609,8 @@
    <slot>mediaPrevious()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>256</x>
-     <y>406</y>
+     <x>303</x>
+     <y>432</y>
     </hint>
     <hint type="destinationlabel">
      <x>316</x>
@@ -619,8 +625,8 @@
    <slot>mediaNext()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>290</x>
-     <y>406</y>
+     <x>337</x>
+     <y>432</y>
     </hint>
     <hint type="destinationlabel">
      <x>351</x>
@@ -635,8 +641,8 @@
    <slot>mediaVolumeMuteUnmute()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>429</x>
-     <y>406</y>
+     <x>477</x>
+     <y>432</y>
     </hint>
     <hint type="destinationlabel">
      <x>580</x>
@@ -651,8 +657,8 @@
    <slot>mediaVolumeSliderMoved(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>519</x>
-     <y>392</y>
+     <x>567</x>
+     <y>418</y>
     </hint>
     <hint type="destinationlabel">
      <x>640</x>
@@ -667,8 +673,8 @@
    <slot>mediaVolumeSliderValueChanged(int)</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>519</x>
-     <y>392</y>
+     <x>567</x>
+     <y>418</y>
     </hint>
     <hint type="destinationlabel">
      <x>620</x>
@@ -683,8 +689,8 @@
    <slot>mediaOpenPlayOptionsDialog()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>385</x>
-     <y>374</y>
+     <x>443</x>
+     <y>432</y>
     </hint>
     <hint type="destinationlabel">
      <x>348</x>

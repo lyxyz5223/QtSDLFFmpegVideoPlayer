@@ -35,7 +35,7 @@
    <item row="0" column="0">
     <widget class="QTabWidget" name="tabWidgetPlayOptions">
      <property name="currentIndex">
-      <number>2</number>
+      <number>0</number>
      </property>
      <property name="documentMode">
       <bool>true</bool>

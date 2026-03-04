@@ -421,12 +421,12 @@ void PlayerTypes::AbstractDemuxer::openAndSelectStreams(const std::string& url, 
         throw std::runtime_error("Failed to open media file: " + url);
     if (!findStreamInfo())
         throw std::runtime_error("Failed to find stream info: " + url);
-    if (!selectStreamsIndices(streams, selector))
+    if (!selectStreamsIndexes(streams, selector))
         throw std::runtime_error("Failed to find and select streams: " + url);
 }
 
 
-bool PlayerTypes::SingleDemuxer::selectStreamsIndices(StreamTypes streams, StreamIndexSelector selector)
+bool PlayerTypes::SingleDemuxer::selectStreamsIndexes(StreamTypes streams, StreamIndexSelector selector)
 {
     if (!selector)
         return false;
@@ -472,6 +472,11 @@ AVPacket* PlayerTypes::SingleDemuxer::getOnePacket()
 bool PlayerTypes::SingleDemuxer::readOnePacket(AVPacket** outPkt)
 {
     AVPacket* pkt = nullptr;
+    if (streamIndex < 0)
+    {
+        logger.error("Stream index is not selected.");
+        return false;
+    }
     while (true)
     {
         pkt = getOnePacket();
@@ -484,7 +489,8 @@ bool PlayerTypes::SingleDemuxer::readOnePacket(AVPacket** outPkt)
     ConcurrentQueueOps::enqueue(packetQueue, pkt);
     //auto pktQueueSize = getQueueSize(playbackStateVariables.packetQueue);
     logger.trace("Pushed audio packet, queue size: {}", oldPktQueueSize + 1);
-    packetEnqueueCallback();
+    if (packetEnqueueCallback)
+        packetEnqueueCallback();
     return true;
 }
 
@@ -544,7 +550,7 @@ void PlayerTypes::SingleDemuxer::readPackets(std::function<void()> packetEnqueue
 }
 
 
-bool PlayerTypes::UnifiedDemuxer::selectStreamsIndices(StreamTypes streams, StreamIndexSelector selector)
+bool PlayerTypes::UnifiedDemuxer::selectStreamsIndexes(StreamTypes streams, StreamIndexSelector selector)
 {
     if (!selector)
         return false;
@@ -604,7 +610,8 @@ bool PlayerTypes::UnifiedDemuxer::readOnePacket(AVPacket** outPkt)
                 threadStateController.pause(); // 暂停当前流的读取线程
             ConcurrentQueueOps::enqueue(sctx.packetQueue, pkt);
             logger.trace("Pushed audio packet, queue size: {}", oldPktQueueSize + 1);
-            sctx.packetEnqueueCallback();
+            if (sctx.packetEnqueueCallback)
+                sctx.packetEnqueueCallback();
             break;
         }
         if (foundStreamContext)
@@ -1001,9 +1008,9 @@ bool PlayerTypes::IFFmpegFrameFilter::addFrameWithFlags(AVFrame* frame, FilterSr
     return addFrameWithFlags(this->srcFilterCtx, frame, flags);
 }
 
-PlayerTypes::SharedPtr<AVFrame> PlayerTypes::IFFmpegFrameFilter::getOutputFrame(FilterSinkFlag flags)
+PlayerTypes::SharedPtr<AVFrame> PlayerTypes::IFFmpegFrameFilter::getOutputFrame(bool& needMore, FilterSinkFlag flags)
 {
-    return getOutputFrame(this->sinkFilterCtx, flags);
+    return getOutputFrame(this->sinkFilterCtx, needMore, flags);
 }
 
 AVFilterContext* PlayerTypes::IFFmpegFrameFilter::createFilterContext(AVFilterGraph* filterGraph, FilterType type, std::string id, std::string args)
@@ -1105,11 +1112,17 @@ bool PlayerTypes::IFFmpegFrameFilter::addFrameWithFlags(AVFilterContext* srcFilt
     return true;
 }
 
-PlayerTypes::SharedPtr<AVFrame> PlayerTypes::IFFmpegFrameFilter::getOutputFrame(AVFilterContext* sinkFilterCtx, FilterSinkFlag flags)
+PlayerTypes::SharedPtr<AVFrame> PlayerTypes::IFFmpegFrameFilter::getOutputFrame(AVFilterContext* sinkFilterCtx, bool& needMore, FilterSinkFlag flags)
 {
     SharedPtr<AVFrame> output{ makeSharedFrame() };
-    if (av_buffersink_get_frame(sinkFilterCtx, output.get()) < 0)
+    int ret = av_buffersink_get_frame(sinkFilterCtx, output.get());
+    needMore = false;
+    if (ret < 0)
+    {
+        if (ret == AVERROR(EAGAIN))
+            needMore = true; // 需要更多帧才能输出
         return makeSharedFrame(nullptr); // false
+    }
     return output;
 }
 
@@ -1182,13 +1195,32 @@ bool PlayerTypes::FFmpegFrameFilterGraph::linkFilters()
     return !failed; // 有一个失败就是失败
 }
 
-PlayerTypes::SharedPtr<AVFrame> PlayerTypes::FFmpegFrameFilterGraph::filter(AVFrame* frame, IFrameFilter::FilterSrcFlag srcFlags, IFrameFilter::FilterSinkFlag sinkFlags)
+//PlayerTypes::SharedPtr<AVFrame> PlayerTypes::FFmpegFrameFilterGraph::filter(AVFrame* frame, IFrameFilter::FilterSrcFlag srcFlags, IFrameFilter::FilterSinkFlag sinkFlags)
+//{
+//    // 添加帧到滤镜图
+//    if (!IFFmpegFrameFilter::addFrameWithFlags(this->srcFilterCtx, frame, srcFlags))
+//        return makeSharedFrame(nullptr);
+//    // 从滤镜图获取处理后的帧
+//    return IFFmpegFrameFilter::getOutputFrame(this->sinkFilterCtx, needMore, sinkFlags);
+//}
+
+
+bool PlayerTypes::FFmpegFrameFilterGraph::addFrame(AVFrame* frame, IFrameFilter::FilterSrcFlag srcFlags)
 {
     // 添加帧到滤镜图
     if (!IFFmpegFrameFilter::addFrameWithFlags(this->srcFilterCtx, frame, srcFlags))
-        return makeSharedFrame(nullptr);
+        return false;
+    return true;
+}
+
+PlayerTypes::SharedPtr<AVFrame> PlayerTypes::FFmpegFrameFilterGraph::getOutputFrame(bool* needMore, IFrameFilter::FilterSinkFlag sinkFlags)
+{
+    bool nm = false;
     // 从滤镜图获取处理后的帧
-    return IFFmpegFrameFilter::getOutputFrame(this->sinkFilterCtx, sinkFlags);
+    auto&& o = IFFmpegFrameFilter::getOutputFrame(this->sinkFilterCtx, nm, sinkFlags);
+    if (needMore)
+        *needMore = nm;
+    return o;
 }
 
 bool PlayerTypes::FFmpegFrameFilterGraph::createFilterGraph()
@@ -1378,13 +1410,17 @@ void PlayerTypes::IFFmpegFrameBasicFilter::resetFilterCtxForGraph()
     this->filterCtx = nullptr;
 }
 
-PlayerTypes::SharedPtr<AVFrame> PlayerTypes::IFFmpegFrameBasicFilter::filter(AVFrame* frame, FilterSrcFlag srcFlag, FilterSinkFlag sinkFlag)
+PlayerTypes::SharedPtr<AVFrame> PlayerTypes::IFFmpegFrameBasicFilter::filter(AVFrame* frame, bool* needMore, FilterSrcFlag srcFlag, FilterSinkFlag sinkFlag)
 {
     // 添加帧到滤镜图
     if (!addFrameWithFlags(frame, srcFlag))
         return makeSharedFrame(nullptr);
     // 从滤镜图获取处理后的帧
-    return getOutputFrame(sinkFlag);
+    bool nm = false;
+    auto&& o = getOutputFrame(nm, sinkFlag);
+    if (needMore)
+        *needMore = nm;
+    return o;
 }
 
 std::string PlayerTypes::IFFmpegFrameBasicFilter::getOrCreateInstanceIdForFilterGraph(IFrameFilterGraph* filterGraph)
@@ -1442,8 +1478,10 @@ bool PlayerTypes::IFFmpegFrameBasicFilter::sendCommandForFilterGraph(std::string
 }
 
 
-PlayerTypes::SharedPtr<AVFrame> PlayerTypes::FFmpegFrameNoneFilter::filter(AVFrame* frame, FilterSrcFlag srcFlag, FilterSinkFlag sinkFlag)
+PlayerTypes::SharedPtr<AVFrame> PlayerTypes::FFmpegFrameNoneFilter::filter(AVFrame* frame, bool* needMore, FilterSrcFlag srcFlag, FilterSinkFlag sinkFlag)
 {
+    if (needMore)
+        *needMore = false;
     if (srcFlag & SrcFlagKeepReference)
     {
         SharedPtr<AVFrame> refFrame{ makeSharedFrame() };

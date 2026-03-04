@@ -17,6 +17,7 @@
 #include <variant>
 #include <span>
 #include <list> // 链表
+#include <optional>
 //#include <Windows.h>
 
 extern "C"
@@ -176,6 +177,9 @@ public:
     }
     static UniquePtr<AVFrame> makeUniqueFrame() {
         return UniquePtr<AVFrame>(av_frame_alloc(), constDeleterAVFrame);
+    }
+    static UniquePtr<AVFrame> makeUniqueFrameNullptr() {
+        return UniquePtr<AVFrame>(nullptr, constDeleterAVFrame);
     }
 
 
@@ -396,7 +400,7 @@ public:
         virtual ~IFrameFilter() = default;
         virtual SharedPtr<IFrameFilter> clone() const = 0;
         virtual FilterType type() const = 0;
-        virtual SharedPtr<AVFrame> filter(AVFrame* frame, FilterSrcFlag srcFlag = SrcFlagKeepReference, FilterSinkFlag sinkFlag = SinkFlagNone) = 0;
+        virtual SharedPtr<AVFrame> filter(AVFrame* frame, bool* needMore = nullptr, FilterSrcFlag srcFlag = SrcFlagKeepReference, FilterSinkFlag sinkFlag = SinkFlagNone) = 0;
         virtual bool isValid() const = 0;
         virtual void resetFilterCtx() = 0;
         virtual AVFilterContext* getFilterCtx() = 0;
@@ -427,7 +431,7 @@ public:
             : streamType(streamType), formatCtx(fmtCtx), codecCtx(codecCtx), streamIndex(streamIndex) {}
         virtual ~IFFmpegFrameFilter() = default;
         virtual SharedPtr<IFrameFilter> clone() const override = 0;
-        virtual SharedPtr<AVFrame> filter(AVFrame* frame, FilterSrcFlag srcFlag = SrcFlagKeepReference, FilterSinkFlag sinkFlag = SinkFlagNone) override = 0;
+        virtual SharedPtr<AVFrame> filter(AVFrame* frame, bool* needMore = nullptr, FilterSrcFlag srcFlag = SrcFlagKeepReference, FilterSinkFlag sinkFlag = SinkFlagNone) override = 0;
         virtual FilterType type() const override = 0;
         // 创建并配置带有单个滤镜的滤镜图，如果使用IFrameFilterGraph则不需要调用此函数
         virtual bool setupGraphWithSingleFilter() override = 0;
@@ -468,13 +472,13 @@ public:
         bool createAndLinkSingleFilter(FilterType type, std::string id, std::string args);
         bool createAndLinkSingleFilter(std::string filterName, std::string id, std::string args);
         bool addFrameWithFlags(AVFrame* frame, FilterSrcFlag flags = SrcFlagNone); // 将frame添加到滤镜图中
-        SharedPtr<AVFrame> getOutputFrame(FilterSinkFlag flags = SinkFlagNone); // 从滤镜图中获取输出frame
+        SharedPtr<AVFrame> getOutputFrame(bool& needMore, FilterSinkFlag flags = SinkFlagNone); // 从滤镜图中获取输出frame
     public:
         static AVFilterContext* createFilterContext(AVFilterGraph* filterGraph, FilterType type, std::string id, std::string args);
         static AVFilterContext* createFilterContext(AVFilterGraph* filterGraph, std::string filterName, std::string id, std::string args);
         static bool createSrcSinkFilterCtx(StreamType streamType, AVFilterGraph* graph, AVCodecContext* codecCtx, AVFormatContext* formatCtx, StreamIndexType streamIndex, AVFilterContext*& outSrcFilterCtx, AVFilterContext*& outSinkFilterCtx);
         static bool addFrameWithFlags(AVFilterContext* srcFilterCtx, AVFrame* frame, FilterSrcFlag flags = SrcFlagNone); // 将frame添加到滤镜图中
-        static SharedPtr<AVFrame> getOutputFrame(AVFilterContext* sinkFilterCtx, FilterSinkFlag flags = SinkFlagNone); // 从滤镜图中获取输出frame
+        static SharedPtr<AVFrame> getOutputFrame(AVFilterContext* sinkFilterCtx, bool& needMore, FilterSinkFlag flags = SinkFlagNone); // 从滤镜图中获取输出frame
     };
     // 滤镜图操作接口
     struct IFrameFilterGraphFilterListOps {
@@ -514,7 +518,9 @@ public:
         // Factory method, 工厂函数
         //virtual SharedPtr<IFrameFilterGraph> createGraph(AVCodecContext* codecCtx) final;
         // 滤镜处理函数
-        virtual SharedPtr<AVFrame> filter(AVFrame* frame, IFrameFilter::FilterSrcFlag srcFlags = IFrameFilter::SrcFlagKeepReference, IFrameFilter::FilterSinkFlag sinkFlags = IFrameFilter::SinkFlagNone) = 0;
+        //virtual SharedPtr<AVFrame> filter(AVFrame* frame, IFrameFilter::FilterSrcFlag srcFlags = IFrameFilter::SrcFlagKeepReference, IFrameFilter::FilterSinkFlag sinkFlags = IFrameFilter::SinkFlagNone) = 0;
+        virtual bool addFrame(AVFrame* frame, IFrameFilter::FilterSrcFlag srcFlags = IFrameFilter::SrcFlagKeepReference) = 0;
+        virtual SharedPtr<AVFrame> getOutputFrame(bool* needMore = nullptr, IFrameFilter::FilterSinkFlag sinkFlags = IFrameFilter::SinkFlagNone) = 0;
         // 判断滤镜图是否有效/是否已正确初始化
         virtual bool isValid() const = 0;
         // 创建滤镜图
@@ -563,7 +569,8 @@ public:
         virtual const AVFilterGraph* getAVFilterGraph() const { return filterGraph.get(); }
 
         // 滤镜处理函数
-        virtual SharedPtr<AVFrame> filter(AVFrame* frame, IFrameFilter::FilterSrcFlag srcFlags = IFrameFilter::SrcFlagKeepReference, IFrameFilter::FilterSinkFlag sinkFlags = IFrameFilter::SinkFlagNone) override;
+        virtual bool addFrame(AVFrame* frame, IFrameFilter::FilterSrcFlag srcFlags = IFrameFilter::SrcFlagKeepReference) override;
+        virtual SharedPtr<AVFrame> getOutputFrame(bool* needMore = nullptr, IFrameFilter::FilterSinkFlag sinkFlags = IFrameFilter::SinkFlagNone) override;
         // 判断滤镜图是否有效/是否已正确初始化
         virtual bool isValid() const override { return configured.load(); }
         // 创建滤镜图
@@ -610,7 +617,7 @@ public:
         virtual bool createFilterCtxForGraph(AVFilterGraph* filterGraph, std::string uniqueInstanceId) override;
         virtual bool createFilterCtxForGraph(IFrameFilterGraph* filterGraph) override;
         virtual void resetFilterCtxForGraph() override;
-        virtual SharedPtr<AVFrame> filter(AVFrame* frame, FilterSrcFlag srcFlag = SrcFlagKeepReference, FilterSinkFlag sinkFlag = SinkFlagNone) override;
+        virtual SharedPtr<AVFrame> filter(AVFrame* frame, bool* needMore = nullptr, FilterSrcFlag srcFlag = SrcFlagKeepReference, FilterSinkFlag sinkFlag = SinkFlagNone) override;
         // 确保所有滤镜、滤镜图和volume滤镜都已初始化
         virtual bool isValid() const override { return isSrcSinkFilterCtxCreated() && isFilterCtxCreated(); }
 
@@ -644,7 +651,7 @@ public:
             : IFFmpegFrameBasicFilter(other.streamType, other.formatCtx, other.codecCtx, other.streamIndex) {
         }
         virtual SharedPtr<IFrameFilter> clone() const override { return std::make_shared<FFmpegFrameNoneFilter>(*this); }
-        virtual SharedPtr<AVFrame> filter(AVFrame* frame, FilterSrcFlag srcFlag = SrcFlagKeepReference, FilterSinkFlag sinkFlag = SinkFlagNone) override;
+        virtual SharedPtr<AVFrame> filter(AVFrame* frame, bool* needMore = nullptr, FilterSrcFlag srcFlag = SrcFlagKeepReference, FilterSinkFlag sinkFlag = SinkFlagNone) override;
         virtual bool isValid() const override { return true; }
         virtual FilterType type() const override { return FilterType::NoneFilter; }
         virtual std::string getFilterName() const { return "None"; }
@@ -1151,9 +1158,9 @@ public:
     };
 
     // 打开文件的时候会查找流，并调用流选择器，用于选择需要解码的流
-    // 返回true表示选择成功，outStreamIndex为选中的流索引，streamIndicesList为所有可选流索引列表
+    // 返回true表示选择成功，outStreamIndex为选中的流索引，streamIndexesList为所有可选流索引列表
     // 如果返回false，则表示未选择任何流
-    using StreamIndexSelector = std::function<bool(StreamIndexType& outStreamIndex, StreamType type, const std::span<AVStream*> streamIndicesList, const AVFormatContext* fmtCtx)>;
+    using StreamIndexSelector = std::function<bool(StreamIndexType& outStreamIndex, StreamType type, const std::span<AVStream*> streamIndexesList, const AVFormatContext* fmtCtx)>;
 
     enum class ComponentWorkMode {
         Internal,
@@ -1351,7 +1358,7 @@ public:
         virtual void close();
         virtual bool isOpen() const { return opened; }
         virtual bool findStreamInfo();
-        virtual bool selectStreamsIndices(StreamTypes streamTypes, StreamIndexSelector selector) = 0;
+        virtual bool selectStreamsIndexes(StreamTypes streamTypes, StreamIndexSelector selector) = 0;
         // 读取一个包，不论这个包是什么流类型
         virtual AVPacket* getOnePacket() = 0;
         // 让解复用器读取一个合适的包，并存入队列，可以通过参数获取到读取到的包
@@ -1443,7 +1450,7 @@ public:
             close();
         }
         // 无论流选择器是否选择了正确的流，都会遍历一遍streams参数指定的所有流类型，尽可能选择所有流对应的索引
-        virtual bool selectStreamsIndices(StreamTypes streamTypes, StreamIndexSelector selector) override;
+        virtual bool selectStreamsIndexes(StreamTypes streamTypes, StreamIndexSelector selector) override;
         /**/bool selectStreamIndex(StreamIndexSelector selector) { return selectStreamIndex(this->streamType, selector); }
         virtual AVPacket* getOnePacket() override;
         virtual bool readOnePacket(AVPacket** pkt = nullptr) override;
@@ -1535,7 +1542,7 @@ public:
             close();
         }
         // 无论流选择器是否选择了正确的流，都会遍历一遍streams参数指定的所有流类型，尽可能选择所有流对应的索引
-        virtual bool selectStreamsIndices(StreamTypes streams, StreamIndexSelector selector) override;
+        virtual bool selectStreamsIndexes(StreamTypes streams, StreamIndexSelector selector) override;
         virtual bool readOnePacket(AVPacket** pkt = nullptr) override;
         virtual AVPacket* getOnePacket() override;
         virtual void setMaxPacketQueueSize(StreamType type, size_t size) override { auto it = streamContexts.find(type); if (it != streamContexts.end()) it->second.maxPacketQueueSize = size; }
@@ -1726,6 +1733,7 @@ public:
     virtual void setSpeed(double speed) = 0;
     virtual double getSpeed() const = 0;
     virtual void setEqualizerState(bool enabled) = 0;
+    virtual bool getEqualizerState() const = 0;
     virtual void setEqualizerGains(const std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo>& gains) = 0;
     virtual void setEqualizerGain(size_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) = 0;
     virtual std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo> getEqualizerGains() const = 0;

@@ -28,7 +28,7 @@ public:
     using VideoFrameSwitchOptionsCallback = VideoPlayer::VideoFrameSwitchOptionsCallback;
     using VideoClockSyncFunction = VideoPlayer::VideoClockSyncFunction;
     using AudioClockSyncFunction = AudioPlayer::AudioClockSyncFunction;
-    using MediaStreamIndexSelector = std::function<bool(StreamIndexType& videoStreamIndex, StreamIndexType& audioStreamIndex, const std::unordered_multimap<StreamType, StreamIndexType>& multimapStreamIndices, const AVFormatContext* fmtCtx, const AVCodecContext* codecCtx)>;
+    using MediaStreamIndexSelector = std::function<bool(StreamIndexType& videoStreamIndex, StreamIndexType& audioStreamIndex, const std::unordered_multimap<StreamType, StreamIndexType>& multimapStreamIndexes, const AVFormatContext* fmtCtx, const AVCodecContext* codecCtx)>;
     using VideoRenderEvent = VideoPlayer::VideoRenderEvent;
     using AudioRenderEvent = AudioPlayer::AudioRenderEvent;
     using VideoDecodeType = VideoPlayer::DecodeType;
@@ -214,11 +214,14 @@ private:
         }
         return result;
         };
-    VideoClockSyncFunction videoClockSyncFunction = [&](const AtomicDouble& videoClock, const AtomicBool& isClockStable, const double& videoRealtimeClock, int64_t& sleepTime, bool& frameShouldDrop) {        
+    VideoClockSyncFunction videoClockSyncFunction = [&](const AtomicDouble& videoClock, const AtomicBool& isClockStable, const double& videoRealtimeClock, const AVFormatContext* formatCtx, const AVCodecContext* codecCtx, StreamIndexType streamIndex, int64_t& sleepTime, bool& frameShouldDrop) {
         this->videoClock.store(videoClock.load());
         this->isVideoClockStable.store(isClockStable.load());
         frameShouldDrop = false;
         sleepTime = 0;
+        logger.trace() << "videoSeekingCount:" << videoSeekingCount.load() << ", audioSeekingCount:" << audioSeekingCount.load()
+            << ", isAudioClockStable:" << isAudioClockStable.load() << ", isClockStable:" << isClockStable.load()
+            << ", audioClock:" << audioClock.load() << ", videoClock:" << videoClock.load();
         if (0 == videoSeekingCount.load() && audioSeekingCount.load() == 0
             && isAudioClockStable.load() && isClockStable.load())
         {
@@ -232,12 +235,24 @@ private:
                     sleepTime *= 0.85;
                 if (sleepTime < -300)
                     frameShouldDrop = true;
+                logger.trace("Video clock sync: videoClock = {}, audioClock = {}, sleepTime = {} ms, frameShouldDrop = {}", videoClock.load(), audioClock.load(), sleepTime, frameShouldDrop);
             }
             return true; // 直接返回true，交给调用者处理
             // 返回值true && (sleepTime != 0)表示需要睡眠/丢帧，false || (sleepTime == 0)表示不需要
         }
-        logger.trace() << "videoSeekingCount:" << videoSeekingCount.load() << ", audioSeekingCount:" << audioSeekingCount.load()
-            << ", isAudioClockStable:" << isAudioClockStable.load() << ", isClockStable:" << isClockStable.load();
+        else
+        {
+            // 固定间隔播放
+            double timeBase = av_q2d(formatCtx->streams[streamIndex]->time_base);
+            double frameDuration = timeBase; // 备用方案：使用时间基计算
+            // 计算帧持续时间
+            AVRational frameRate = formatCtx->streams[streamIndex]->avg_frame_rate;
+            if (frameRate.num > 0 && frameRate.den > 0)
+                frameDuration = av_q2d(av_inv_q(frameRate)); // 每帧的秒数，用于备选：计算视频时钟
+            sleepTime = frameDuration * 1000;
+            logger.trace("Video clock sync: videoClock = {}, audioClock = {}, sleepTime = {} ms, frameShouldDrop = {}", videoClock.load(), audioClock.load(), sleepTime, frameShouldDrop);
+            return true;
+        }
         return false;
         };
 
@@ -439,6 +454,9 @@ public:
     }
     virtual void setEqualizerState(bool enabled) {
         audioPlayer->setEqualizerState(enabled);
+    }
+    virtual bool getEqualizerState() const {
+        return audioPlayer->getEqualizerState();
     }
     virtual void setEqualizerGains(const std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo>& gains) {
         audioPlayer->setEqualizerGains(gains);

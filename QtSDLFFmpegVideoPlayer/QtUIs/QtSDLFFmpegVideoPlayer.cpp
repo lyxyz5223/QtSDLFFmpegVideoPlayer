@@ -12,6 +12,7 @@
 #else
 #endif
 
+
 QtSDLFFmpegVideoPlayer::QtSDLFFmpegVideoPlayer(QWidget* parent)
     : QMainWindow(parent)
 {
@@ -23,13 +24,6 @@ QtSDLFFmpegVideoPlayer::QtSDLFFmpegVideoPlayer(QWidget* parent)
     ui.videoRenderWidget->show();
     // 创建SDL窗口和渲染器
     createVideoWidget();
-#ifdef USE_SDL_WIDGET
-#elif defined(USE_QT_MULTIMEDIA_WIDGET)
-    qMediaPlayer = new QMediaPlayer(this);
-    qAudioOutput = new QAudioOutput(this);
-    qMediaPlayer->setVideoOutput(videoWidget);
-    qMediaPlayer->setAudioOutput(qAudioOutput);
-#endif
     taskbarMediaController.initialize(reinterpret_cast<HWND>(this->winId())); // 初始化任务栏媒体控制器
 
     // 启动SDL事件循环定时器，单次触发，间隔0ms
@@ -76,7 +70,21 @@ QtSDLFFmpegVideoPlayer::QtSDLFFmpegVideoPlayer(QWidget* parent)
     optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::equalizerGainChange, this, &QtSDLFFmpegVideoPlayer::playerSetEqualizerGain);
     optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::equalizerGainsChange, this, &QtSDLFFmpegVideoPlayer::playerSetEqualizerGains);
     optionsWidget->setPlaySpeed(mediaPlayer.getSpeed());
+    optionsWidget->setEqualizerEnabled(mediaPlayer.getEqualizerState());
 
+    videoPreviewThumbnailWidget = new QLabel(this);
+    videoPreviewThumbnailWidget->setWindowFlag(Qt::FramelessWindowHint, true);
+    videoPreviewThumbnailWidget->setAttribute(Qt::WA_ShowWithoutActivating, true);
+    videoPreviewThumbnailWidget->setFocusPolicy(Qt::NoFocus);
+    // 创建调色板
+    //QPalette palette;
+    //palette.setBrush(videoPreviewThumbnailWidget->backgroundRole(), QColor(255, 255, 255, 255));
+    // 应用调色板
+    //videoPreviewThumbnailWidget->setAutoFillBackground(true);
+    //videoPreviewThumbnailWidget->setPalette(palette);
+    videoPreviewThumbnailWidget->setScaledContents(true);
+    videoPreviewThumbnailWidget->installEventFilter(this);
+    ui.sliderMediaProgress->installEventFilter(this);
     show();
     taskbarMediaController.addThumbBarButtons();
 }
@@ -114,6 +122,121 @@ void QtSDLFFmpegVideoPlayer::resizeEvent(QResizeEvent* e)
     ui.labelMediaName->setText(elidedMediaName);
 }
 
+bool QtSDLFFmpegVideoPlayer::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == nullptr)
+    {
+        return false;
+    }
+    else if (watched == ui.sliderMediaProgress)
+    {
+        switch (event->type())
+        {
+        case QEvent::Enter:
+        case QEvent::MouseMove:
+        {
+            if (!videoPreviewThumbnailWidget)
+                break;
+            std::unique_lock lock(mtxPreviewDemuxer);
+            if (!previewDemuxer->isOpen() || !previewCodecCtx.get())
+                break;
+            QRect videoPreviewThumbnailWidgetRect{ mapFromGlobal(QCursor::pos()).x(), ui.sliderMediaProgress->mapTo(this, ui.sliderMediaProgress->rect().topLeft()).y(), 160, 90 };
+            videoPreviewThumbnailWidget->resize(videoPreviewThumbnailWidgetRect.size());
+            videoPreviewThumbnailWidget->move(
+                videoPreviewThumbnailWidgetRect.x() - videoPreviewThumbnailWidgetRect.size().width() / 2,
+                videoPreviewThumbnailWidgetRect.y() - videoPreviewThumbnailWidgetRect.size().height() - 5
+            );
+            videoPreviewThumbnailWidget->show();
+            uint64_t seekToTimeMs = calcSliderValueFromGlobalPos(ui.sliderMediaProgress, QCursor::pos());
+            if (seekToTimeMs / 1000 == previewCurrentTimeMs / 1000)
+                break;
+            if (seekToTimeMs > previewCurrentTimeMs)
+            {
+                if (seekToTimeMs / 1000 - previewCurrentTimeMs / 1000 < 5)
+                    break;
+            }
+            else if (seekToTimeMs < previewCurrentTimeMs)
+            {
+                if (previewCurrentTimeMs / 1000 - seekToTimeMs / 1000 < 5)
+                    break;
+            }
+            logger.info("Preview thumbnail seek time: {} ms, time string: {}", seekToTimeMs, msToQString(seekToTimeMs).toStdString());
+            previewCurrentTimeMs = seekToTimeMs;
+            auto seekToPts = calcSeekTimeFromMs(seekToTimeMs);
+            if (av_seek_frame(previewDemuxer->getFormatContext(), -1/*previewDemuxer->getStreamIndex()*/, seekToPts, AVSEEK_FLAG_BACKWARD) < 0) // 定位到指定时间戳附近的关键帧
+                break;
+            previewDemuxer->flushPacketQueue(); // 定位后需要刷新packet队列，否则可能会读到之前的packet
+            avcodec_flush_buffers(previewCodecCtx.get());
+            AVPacket* pkt = nullptr;
+            AbstractPlayer::UniquePtr<AVFrame> frame{ AbstractPlayer::makeUniqueFrame() };
+            while (previewDemuxer->readOnePacket(&pkt) && pkt) // 预读一帧，获取视频流信息，准备生成预览缩略图
+            {
+                int aspRst = avcodec_send_packet(previewCodecCtx.get(), pkt);
+                if (aspRst < 0 && aspRst != AVERROR(EAGAIN))
+                {
+                    pkt = nullptr;
+                    break;
+                }
+                int rst = avcodec_receive_frame(previewCodecCtx.get(), frame.get());
+                if (rst >= 0)
+                    break;
+                if (rst != AVERROR(EAGAIN))
+                {
+                    pkt = nullptr;
+                    break;
+                }
+            }
+            if (!pkt) break;
+            logger.trace("Preview current frame pts: {}, duration: {}", frame->pts, previewDemuxer->getFormatContext()->streams[previewDemuxer->getStreamIndex()]->duration);
+            QSize scaleSize{ frame->width, frame->height };
+            QImage image{ scaleSize.width(), scaleSize.height(), QImage::Format_RGB888};
+            uint8_t* imageData[4] = { image.bits(), nullptr, nullptr, nullptr };
+            int imageLinesize[4] = { static_cast<int>(image.bytesPerLine()), 0, 0, 0 };
+            // sws转换插值算法
+            if (!previewSwsCtx)
+            {
+                constexpr SwsFlags swsFlags = SWS_BILINEAR;
+                previewSwsCtx.reset(sws_getContext(frame->width, frame->height, static_cast<AVPixelFormat>(frame->format), scaleSize.width(), scaleSize.height(), AV_PIX_FMT_RGB24, swsFlags, 0, 0, 0));
+                if (!previewSwsCtx)
+                    break;
+            }
+            // 转换像素格式
+            int outputSliceHeight = sws_scale(previewSwsCtx.get(), (const uint8_t* const*)frame->data, frame->linesize, 0, frame->height, imageData, imageLinesize);
+            if (outputSliceHeight < 0)
+                break;
+            videoPreviewThumbnailWidget->setPixmap(QPixmap::fromImage(image));
+            //videoPreviewThumbnailWidget->setText(msToQString(ui.sliderMediaProgress->value() - ui.sliderMediaProgress->minimum()));
+        }
+            break;
+        case QEvent::Leave:
+        {
+            if (videoPreviewThumbnailWidget)
+                videoPreviewThumbnailWidget->hide();
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    else if (watched == videoPreviewThumbnailWidget)
+    {
+        switch (event->type())
+        {
+        case QEvent::Paint:
+        {
+            //QPainter p(videoPreviewThumbnailWidget);
+            //p.setPen(QColor(255, 127, 80, 255));
+            //p.setBrush(Qt::NoBrush);
+            //p.drawRoundedRect(videoPreviewThumbnailWidget->rect().adjusted(0, 0, -1, -1), 5, 5);
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    return false;
+}
+
 void QtSDLFFmpegVideoPlayer::sdlEventLoop()
 {
 #ifdef USE_SDL_WIDGET
@@ -129,7 +252,7 @@ void QtSDLFFmpegVideoPlayer::selectFilesAndPlay()
     auto oldSize = playlist.size();
     ui.playListDockWidgetContents->appendFiles();
     if (!playlist.size() || playlist.size() <= oldSize) return;
-    playerPlay(playlist.at(oldSize).url);
+    playerPlayByPlayListIndex(oldSize);
 }
 
 void QtSDLFFmpegVideoPlayer::selectFolderAndPlay()
@@ -235,15 +358,27 @@ QString QtSDLFFmpegVideoPlayer::getElidedString(QString str, int width, QFont fo
 void QtSDLFFmpegVideoPlayer::beforePlaybackCallback(AbstractPlayer::StreamType streamType, const AVFormatContext* formatCtx, const AVCodecContext* videoCodecCtx, AbstractPlayer::StreamIndexType streamIndex)
 {
     auto dur = calcMsFromAVDuration(formatCtx->streams[streamIndex]->duration, formatCtx->streams[streamIndex]->time_base); // 转换为毫秒;;
-    if (this->duration < dur)
-    {
+    if (this->duration < dur || (this->duration == dur && dur != 0 && streamType & AbstractPlayer::StreamType::STAudio))
+    {// 时长长的优先，其次是音频优先
         this->timeUpdateStream = streamType;
         this->duration = dur;
     }
-    else if (this->duration == 0)
+    else if (this->duration == 0) 
     {
         this->timeUpdateStream = streamType;
         this->duration = calcMsFromAVDuration(formatCtx->duration); // 转换为毫秒
+    }
+    if (streamType & AbstractPlayer::STVideo)
+    {
+        std::unique_lock lock(mtxPreviewDemuxer);
+        previewDemuxer->selectStreamIndex([streamIndex](AbstractPlayer::StreamIndexType& outStreamIndex, AbstractPlayer::StreamType type, const std::span<AVStream*> streamIndexesList, const AVFormatContext* fmtCtx) -> bool {
+                if (streamIndex == -1)
+                    return false;
+                outStreamIndex = streamIndex;
+                return true; // 选择第一个视频流
+            });
+        if (!MediaDecodeUtils::findAndOpenVideoDecoder(&logger, previewDemuxer->getFormatContext(), previewDemuxer->getStreamIndex(), previewCodecCtx, false/*hwEnabled*/))
+            previewCodecCtx.reset(nullptr);
     }
     logger.info() << "Media Duration (ms):" << this->duration;
     QString elidedMediaName = getElidedString(ui.playListDockWidgetContents->getPlayListItem(ui.playListDockWidgetContents->getCurrentPlayingIndex()).title, ui.labelMediaName->width(), ui.labelMediaName->font()); // 设置媒体名称显示
@@ -319,10 +454,18 @@ void QtSDLFFmpegVideoPlayer::playerPlay(QString filePath)
 {
     std::thread([this, filePath]() {
         mediaPlayer.stop();
+        resetMediaPlayerStates();
 #ifdef USE_SDL_WIDGET
         mediaPlayer.play(filePath.toStdString(), SDLApp::getWindowId(videoWidget->getSDLWindow()), true);
 #elif defined(USE_QT_MULTIMEDIA_WIDGET)
+        std::unique_lock lock(mtxPreviewDemuxer);
+        previewDemuxer->close();
+        previewDemuxer->open(filePath.toStdString());
+        previewDemuxer->findStreamInfo();
+        previewSwsCtx.reset(nullptr);
+        lock.unlock();
         mediaPlayer.play(filePath.toStdString(), videoWidget, true);
+        //previewVideoCapture.open(filePath.toStdString());
         //qMediaPlayer->stop();
         //qMediaPlayer->setSource(QUrl::fromLocalFile(filePath));
         //qMediaPlayer->play();
@@ -336,6 +479,10 @@ void QtSDLFFmpegVideoPlayer::playerStop()
 {
     ui.playListDockWidgetContents->setCurrentPlayingIndex(-1); // 清除播放状态
     mediaPlayer.stop();
+    std::unique_lock lock(mtxPreviewDemuxer);
+    previewDemuxer->close();
+    previewDemuxer->reset();
+    previewDemuxer->setStreamType(AbstractPlayer::StreamType::STVideo);
 }
 
 void QtSDLFFmpegVideoPlayer::playerPlayByPlayListIndex(qsizetype index)

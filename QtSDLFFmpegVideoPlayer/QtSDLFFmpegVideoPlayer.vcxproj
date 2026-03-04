@@ -94,13 +94,13 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Link>
-      <AdditionalDependencies>SDL3.lib;avcodec.lib;avdevice.lib;avfilter.lib;avformat.lib;avutil.lib;swresample.lib;swscale.lib;rtaudiod.lib;portaudio_x64.lib;Logger_d.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>..\..\Libraries\ffmpeg-shared\lib;..\..\Libraries\SDL3\lib\x64;..\..\Libraries\rtaudio-6.0.1\build\Debug;..\..\Libraries\portaudio-19.7.0\build\msvc\x64\Debug;..\..\Libraries\Logger\build\Debugx64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>SDL3.lib;avcodec.lib;avdevice.lib;avfilter.lib;avformat.lib;avutil.lib;swresample.lib;swscale.lib;rtaudiod.lib;portaudio_x64.lib;Logger_d.lib;opencv_world4130d.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>..\..\Libraries\ffmpeg-shared\lib;..\..\Libraries\SDL3\lib\x64;..\..\Libraries\rtaudio-6.0.1\build\Debug;..\..\Libraries\portaudio-19.7.0\build\msvc\x64\Debug;..\..\Libraries\Logger\build\Debugx64;..\..\Libraries\opencv\build\x64\vc16\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <ClCompile>
       <PreprocessorDefinitions>HAVE_RTAUDIO;HAVE_PORTAUDIO;USE_STD_FORMAT;USE_QT_MULTIMEDIA_WIDGET;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>..\..\Libraries\ffmpeg-shared\include;..\..\Libraries\SDL3\include;..\..\Libraries\rtaudio-6.0.1;..\..\Libraries\portaudio-19.7.0\include;..\..\Libraries\Logger\include;..\..\Libraries\ConcurrentQueue;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\Libraries\ffmpeg-shared\include;..\..\Libraries\SDL3\include;..\..\Libraries\rtaudio-6.0.1;..\..\Libraries\portaudio-19.7.0\include;..\..\Libraries\Logger\include;..\..\Libraries\ConcurrentQueue;..\..\Libraries\opencv\build\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Windows 7|x64'">
@@ -118,12 +118,12 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>..\..\Libraries\ffmpeg-shared\include;..\..\Libraries\SDL3\include;..\..\Libraries\rtaudio-6.0.1;..\..\Libraries\portaudio-19.7.0\include;..\..\Libraries\Logger\include;..\..\Libraries\ConcurrentQueue;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\Libraries\ffmpeg-shared\include;..\..\Libraries\SDL3\include;..\..\Libraries\rtaudio-6.0.1;..\..\Libraries\portaudio-19.7.0\include;..\..\Libraries\Logger\include;..\..\Libraries\ConcurrentQueue;..\..\Libraries\opencv\build\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>HAVE_RTAUDIO;HAVE_PORTAUDIO;USE_STD_FORMAT;USE_QT_MULTIMEDIA_WIDGET;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>SDL3.lib;avcodec.lib;avdevice.lib;avfilter.lib;avformat.lib;avutil.lib;swresample.lib;swscale.lib;rtaudio.lib;portaudio_x64.lib;Logger.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>..\..\Libraries\ffmpeg-shared\lib;..\..\Libraries\SDL3\lib\x64;..\..\Libraries\rtaudio-6.0.1\build\Release;..\..\Libraries\portaudio-19.7.0\build\msvc\x64\Release;..\..\Libraries\Logger\build\Releasex64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>..\..\Libraries\ffmpeg-shared\lib;..\..\Libraries\SDL3\lib\x64;..\..\Libraries\rtaudio-6.0.1\build\Release;..\..\Libraries\portaudio-19.7.0\build\msvc\x64\Release;..\..\Libraries\Logger\build\Releasex64;..\..\Libraries\opencv\build\x64\vc16\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>SDL3.lib;avcodec.lib;avdevice.lib;avfilter.lib;avformat.lib;avutil.lib;swresample.lib;swscale.lib;rtaudio.lib;portaudio_x64.lib;Logger.lib;opencv_world4130.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="Configuration">

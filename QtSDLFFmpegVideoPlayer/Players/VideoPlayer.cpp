@@ -112,16 +112,16 @@ void VideoPlayer::cleanupAfterPlayback()
 
 //bool VideoPlayer::findAndSelectVideoStream()
 //{
-//    std::vector<StreamIndexType> streamIndicesList;
+//    std::vector<StreamIndexType> streamIndexesList;
 //    // 查找视频流和音频流
 //    for (size_t i = 0; i < playbackStateVariables.formatCtx->nb_streams; ++i)
 //        if (playbackStateVariables.formatCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
-//            streamIndicesList.emplace_back(i);
+//            streamIndexesList.emplace_back(i);
 //    StreamIndexType si = -1;
 //    auto& streamIndexSelector = playbackStateVariables.playOptions.streamIndexSelector;
 //    if (!streamIndexSelector)
 //        return false;
-//    bool rst = streamIndexSelector(si, StreamType::STVideo, streamIndicesList, playbackStateVariables.formatCtx.get(), playbackStateVariables.codecCtx.get());
+//    bool rst = streamIndexSelector(si, StreamType::STVideo, streamIndexesList, playbackStateVariables.formatCtx.get(), playbackStateVariables.codecCtx.get());
 //    if (rst)
 //    {
 //        if (si >= 0 && si < static_cast<StreamIndexType>(playbackStateVariables.formatCtx->nb_streams))
@@ -410,7 +410,7 @@ void VideoPlayer::renderVideo()
         {
             int64_t sleepTime = 0;
             bool frameShouldDrop = false;
-            bool rst = videoClockSyncFunction(playbackStateVariables.videoClock, playbackStateVariables.isVideoClockStable, playbackStateVariables.realtimeClock, sleepTime, frameShouldDrop);
+            bool rst = videoClockSyncFunction(playbackStateVariables.videoClock, playbackStateVariables.isVideoClockStable, playbackStateVariables.realtimeClock, playbackStateVariables.formatCtx, playbackStateVariables.codecCtx.get(), playbackStateVariables.streamIndex, sleepTime, frameShouldDrop);
             if (rst && sleepTime != 0)
             {
                 if (frameShouldDrop)
@@ -492,7 +492,9 @@ void VideoPlayer::renderVideo()
         speedFilter->setSpeed(playbackStateVariables.speed);
         if (filterGraph->isValid())
         {
-            filteredFrame = filterGraph->filter(videoFrame, IFrameFilter::SrcFlagKeepReference, IFrameFilter::SinkFlagNone);
+            if (!filterGraph->addFrame(videoFrame, IFrameFilter::SrcFlagKeepReference))
+                logger.error("Error add frame to filter graph");
+            filteredFrame = filterGraph->getOutputFrame(nullptr, IFrameFilter::SinkFlagNone);
             if (!filteredFrame)
                 continue; // filter失败
         }

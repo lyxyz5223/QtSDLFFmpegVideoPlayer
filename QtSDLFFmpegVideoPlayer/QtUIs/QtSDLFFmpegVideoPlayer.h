@@ -8,6 +8,8 @@
 
 // Windows任务栏媒体控制集成
 #include "TaskbarMediaController.h"
+// 处理视频预览缩略图
+#include <opencv2/opencv.hpp>
 
 #ifdef USE_SDL_WIDGET
 #elif defined(USE_QT_MULTIMEDIA_WIDGET)
@@ -146,7 +148,7 @@ protected:
     virtual bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;
     virtual void closeEvent(QCloseEvent* e) override;
     virtual void resizeEvent(QResizeEvent* e) override;
-
+    virtual bool eventFilter(QObject* watched, QEvent* event) override;
 
 public slots:
     void sdlEventLoop();
@@ -180,21 +182,30 @@ private:
     char** argv = nullptr;
 
     // 日志记录
-    DefinePlayerLoggerSinks(qtSDLFFmpegVideoPlayerLoggerSinks, "QtSDLFFmpegVideoPlayer");
-    Logger logger{ "QtSDLFFmpegVideoPlayer", qtSDLFFmpegVideoPlayerLoggerSinks };
+    const std::string loggerName{ "QtSDLFFmpegVideoPlayer" };
+    DefinePlayerLoggerSinks(qtSDLFFmpegVideoPlayerLoggerSinks, loggerName);
+    Logger logger{ loggerName, qtSDLFFmpegVideoPlayerLoggerSinks };
 
     PlayerOptionsWidget* optionsWidget{ nullptr };
 
     TaskbarMediaController taskbarMediaController;
 
+    QLabel* videoPreviewThumbnailWidget{ nullptr };
+    // 预览解码器
+    std::mutex mtxPreviewDemuxer;
+    AbstractPlayer::SharedPtr<AbstractPlayer::SingleDemuxer> previewDemuxer{ std::make_shared<AbstractPlayer::SingleDemuxer>(loggerName, AbstractPlayer::STVideo) };
+    AbstractPlayer::UniquePtr<SwsContext> previewSwsCtx{ nullptr, [](auto* ctx) { sws_freeContext(ctx); } };
+    AbstractPlayer::UniquePtr<AVCodecContext> previewCodecCtx{ nullptr, AbstractPlayer::constDeleterAVCodecContext };
+    std::atomic<uint64_t> previewCurrentTimeMs{ 0 };
+    //cv::VideoCapture previewVideoCapture;
 
     // SDL渲染窗口
 #ifdef USE_SDL_WIDGET
     std::unique_ptr<VideoWidget> videoWidget{ nullptr };
 #elif defined(USE_QT_MULTIMEDIA_WIDGET)
     VideoWidget* videoWidget{ nullptr };
-    QMediaPlayer* qMediaPlayer{ nullptr };
-    QAudioOutput* qAudioOutput{ nullptr };
+    //QMediaPlayer* qMediaPlayer{ nullptr };
+    //QAudioOutput* qAudioOutput{ nullptr };
 #else
     std::unique_ptr<VideoWidget> videoWidget{ nullptr };
 #endif
@@ -207,6 +218,13 @@ private:
     std::atomic<AbstractPlayer::StreamType> timeUpdateStream{ AbstractPlayer::StreamType::STNone }; // 用于ui时钟同步使用的流
     std::atomic<int64_t> currentTimeMs{ 0 }; // 当前播放位置，单位秒
     std::atomic<int64_t> currentTimeS{ 0 }; // 当前播放位置，单位秒
+
+    void resetMediaPlayerStates() {
+        this->duration = 0;
+        this->timeUpdateStream = AbstractPlayer::StreamType::STNone;
+        this->currentTimeMs = 0;
+        this->currentTimeS = 0;
+    }
 
     // 
     std::atomic<bool> isMediaSliderMoving{ false };
@@ -223,6 +241,13 @@ private:
         videoWidget = new VideoWidget(ui.videoRenderWidget);
         ui.videoRenderWidget->layout()->addWidget(videoWidget);
 #else
+#endif
+#ifdef USE_SDL_WIDGET
+#elif defined(USE_QT_MULTIMEDIA_WIDGET)
+        //qMediaPlayer = new QMediaPlayer(this);
+        //qAudioOutput = new QAudioOutput(this);
+        //qMediaPlayer->setVideoOutput(videoWidget);
+        //qMediaPlayer->setAudioOutput(qAudioOutput);
 #endif
     }
     void destroyVideoWidget() {
@@ -283,6 +308,16 @@ private:
     }
     double getVolumeFromUI() const {
         return getVolumeFromUIValue(ui.sliderVolume->value());
+    }
+    int calcSliderValueFromGlobalPos(QSlider* slider, QPoint pos) {
+        int rst = 0;
+        if (slider->orientation() == Qt::Horizontal)
+            rst = ((double)slider->mapFromGlobal(pos).x() / slider->width()) * (slider->maximum() - slider->minimum()) + slider->minimum();
+        else
+            rst = (1 - (double)slider->mapFromGlobal(pos).y() / slider->height()) * (slider->maximum() - slider->minimum()) + slider->minimum();
+        if (rst < slider->minimum()) return slider->minimum();
+        if (rst > slider->maximum()) return slider->maximum();
+        return rst;
     }
 
     static double calcMsFromTimeStamp(uint64_t pts, AVRational timeBase) {

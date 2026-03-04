@@ -291,6 +291,10 @@ public:
     virtual void setEqualizerState(bool enabled) {
         playbackStateVariables.isEqualizerEnabled.store(enabled);
     }
+    virtual bool getEqualizerState() const {
+        return playbackStateVariables.isEqualizerEnabled.load();
+    }
+
     virtual void setEqualizerGains(const std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo>& gains) {
         playbackStateVariables.equalizerBandGains = gains;
     }

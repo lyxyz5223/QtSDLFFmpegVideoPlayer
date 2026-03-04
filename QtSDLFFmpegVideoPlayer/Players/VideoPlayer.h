@@ -58,7 +58,7 @@ public:// 这个区域用于定义公共类型
     // sleepTime > 0 表示可能需要睡眠以等待时钟
     // frameShouldDrop 用于返回是否需要丢帧，true表示需要丢帧，false表示不需要丢帧
     // 返回值true && (sleepTime != 0)表示需要睡眠/丢帧，false || (sleepTime == 0)表示不需要
-    using VideoClockSyncFunction = std::function<bool(const AtomicDouble& videoClock, const AtomicBool& isClockStable, const double& videoRealtimeClock, int64_t& sleepTime, bool& frameShouldDrop)>;
+    using VideoClockSyncFunction = std::function<bool(const AtomicDouble& videoClock, const AtomicBool& isClockStable, const double& videoRealtimeClock, const AVFormatContext* formatCtx, const AVCodecContext* codecCtx, StreamIndexType streamIndex, int64_t& sleepTime, bool& frameShouldDrop)>;
 
     enum class DecodeType {
         Unset = 0,
@@ -287,6 +287,7 @@ public:
         return playbackStateVariables.speed.load();
     }
     virtual void setEqualizerState(bool enabled) {}
+    virtual bool getEqualizerState() const { return false; }
     virtual void setEqualizerGains(const std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo>& gains) {}
     virtual void setEqualizerGain(size_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) {}
     virtual std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo> getEqualizerGains() const { return {}; }
@@ -422,7 +423,7 @@ protected:
             playbackStateVariables.isVideoClockStable.store(isStable);
             int64_t sleepTime = 0;
             bool frameShouldDrop = false;
-            bool ret = playbackStateVariables.playOptions.clockSyncFunction(playbackStateVariables.videoClock, playbackStateVariables.isVideoClockStable, playbackStateVariables.realtimeClock, sleepTime, frameShouldDrop);
+            bool ret = playbackStateVariables.playOptions.clockSyncFunction(playbackStateVariables.videoClock, playbackStateVariables.isVideoClockStable, playbackStateVariables.realtimeClock, playbackStateVariables.formatCtx, playbackStateVariables.codecCtx.get(), playbackStateVariables.streamIndex, sleepTime, frameShouldDrop);
             if (!ret) return 0; // 返回false表示不需要同步
             return sleepTime;
         }

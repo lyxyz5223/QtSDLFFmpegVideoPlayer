@@ -13,6 +13,9 @@ public:
     void setPlaySpeed(double speed) {
         ui.doubleSpinBoxPlaySpeed->setValue(speed);
     }
+    void setEqualizerEnabled(bool enabled) {
+        ui.checkBoxEnableEqualizer->setChecked(enabled);
+    }
 
     void setPlayerABLoopIntervalSideA(uint64_t milliseconds) {
         ui.timeEditPlayerABLoopIntervalSideA->setTime(QTime::fromMSecsSinceStartOfDay(milliseconds));
