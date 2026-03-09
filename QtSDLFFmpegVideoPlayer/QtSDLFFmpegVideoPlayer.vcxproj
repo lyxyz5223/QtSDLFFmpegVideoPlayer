@@ -98,7 +98,7 @@
       <AdditionalLibraryDirectories>..\..\Libraries\ffmpeg-shared\lib;..\..\Libraries\SDL3\lib\x64;..\..\Libraries\rtaudio-6.0.1\build\Debug;..\..\Libraries\portaudio-19.7.0\build\msvc\x64\Debug;..\..\Libraries\Logger\build\Debugx64;..\..\Libraries\opencv\build\x64\vc16\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <ClCompile>
-      <PreprocessorDefinitions>HAVE_RTAUDIO;HAVE_PORTAUDIO;USE_STD_FORMAT;USE_QT_MULTIMEDIA_WIDGET;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>HAVE_RTAUDIO;HAVE_PORTAUDIO;USE_STD_FORMAT;NOT_USE_SDL_WIDGET;USE_QT_MULTIMEDIA_WIDGET;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalIncludeDirectories>..\..\Libraries\ffmpeg-shared\include;..\..\Libraries\SDL3\include;..\..\Libraries\rtaudio-6.0.1;..\..\Libraries\portaudio-19.7.0\include;..\..\Libraries\Logger\include;..\..\Libraries\ConcurrentQueue;..\..\Libraries\opencv\build\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
@@ -213,6 +213,7 @@
     <QtMoc Include="QtUIs\PlayerOptionsWidget.h" />
     <ClInclude Include="QtUIs\SDLWidget.h" />
     <ClInclude Include="QtUIs\TaskbarMediaController.h" />
+    <ClInclude Include="QtUIs\Win32TaskbarMediaController.h" />
     <ClInclude Include="QtUtils\QtMediaPlayer.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="SDLUtils\SDLApp.h" />

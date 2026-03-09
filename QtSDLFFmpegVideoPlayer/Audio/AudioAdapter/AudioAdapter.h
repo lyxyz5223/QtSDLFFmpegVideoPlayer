@@ -90,7 +90,7 @@ public:
         AFFloat32,
         AFFloat64
     };
-    constexpr static size_t AudioFormatCount = sizeof(AudioFormatList) / sizeof(AudioFormatList[0]);
+    constexpr static uint64_t AudioFormatCount = sizeof(AudioFormatList) / sizeof(AudioFormatList[0]);
 
     using AudioFormats = MultiEnumTypeDefine<AudioFormat>;
 

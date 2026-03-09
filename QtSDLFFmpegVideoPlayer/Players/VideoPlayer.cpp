@@ -114,7 +114,7 @@ void VideoPlayer::cleanupAfterPlayback()
 //{
 //    std::vector<StreamIndexType> streamIndexesList;
 //    // 查找视频流和音频流
-//    for (size_t i = 0; i < playbackStateVariables.formatCtx->nb_streams; ++i)
+//    for (uint64_t i = 0; i < playbackStateVariables.formatCtx->nb_streams; ++i)
 //        if (playbackStateVariables.formatCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
 //            streamIndexesList.emplace_back(i);
 //    StreamIndexType si = -1;
@@ -272,7 +272,7 @@ void VideoPlayer::renderVideo()
     // 软件
     UniquePtr<AVFrame> swFrame{ av_frame_alloc(), constDeleterAVFrame };
     AVFrame* videoFrame = nullptr; // 用于存放解码后的视频帧，此帧不需要释放
-    UniquePtr<AVFrame> switchedFrame{ av_frame_alloc(), constDeleterAVFrame }; // 用于存放转换为新格式的视频帧
+    UniquePtr<AVFrame> switchedFrame{ makeUniqueFrame() }; // 用于存放转换为新格式的视频帧
     UniquePtr<uint8_t> bufferSwitchedFrame = { nullptr, [](uint8_t* p) { if (p) av_free(p); } };
     UniquePtr<SwsContext> swSwsCtx{ nullptr, [](SwsContext* ctx) { if (ctx) sws_freeContext(ctx); } };
     UniquePtr<SwsContext> hwSwsCtx{ nullptr, [](SwsContext* ctx) { if (ctx) sws_freeContext(ctx); } };
@@ -313,7 +313,7 @@ void VideoPlayer::renderVideo()
     {
         if (waitObj.isBlocking())
             waitObj.block();
-        std::chrono::steady_clock::time_point timeBeforeGetFrame = std::chrono::high_resolution_clock::now();
+        auto timeBeforeGetFrame = std::chrono::high_resolution_clock::now();
 
         if (shouldStop()) // 收到停止信号，退出循环
             break;
@@ -336,7 +336,7 @@ void VideoPlayer::renderVideo()
             rawFrame.reset(frame); // 取出队列头部元素
         }
         logger.trace("Got video frame, current video frame queue size: {}", getQueueSize(playbackStateVariables.frameQueue));
-        std::chrono::steady_clock::time_point timeBeforeTimeSync = std::chrono::high_resolution_clock::now();
+        auto timeBeforeTimeSync = std::chrono::high_resolution_clock::now();
 
         // 视频帧处理
         videoFrame = rawFrame.get(); // 先假定使用原始解码后的帧，后面可能会转换格式
@@ -450,7 +450,7 @@ void VideoPlayer::renderVideo()
                 }
             }
         }
-        std::chrono::steady_clock::time_point timeBeforeSwitch = std::chrono::high_resolution_clock::now();
+        auto timeBeforeSwitch = std::chrono::high_resolution_clock::now();
 
         // 处理解码后的视频帧
         if (isHardwareDecoded) // 使用硬件解码
@@ -534,26 +534,36 @@ void VideoPlayer::renderVideo()
             constexpr int alignSize = 64; // 帧buffer的对齐大小
             // 获取新格式所需的缓冲区大小
             int numBytes = av_image_get_buffer_size(switchOptions.format, scaleSize.width(), scaleSize.height(), alignSize);
-            // 分配缓冲区，并用智能指针管理，自动释放之前的缓冲区
-            bufferSwitchedFrame.reset(static_cast<uint8_t*>(av_malloc(numBytes)));
-            switchedFrame->format = switchOptions.format; // 设置新格式
-            // 转换为新格式的帧, switchedFrame->data将指向bufferSwitchedFrame所指向的内存
-            int rst = av_image_fill_arrays(switchedFrame->data, switchedFrame->linesize,
-                bufferSwitchedFrame.get(), switchOptions.format,
-                scaleSize.width(), scaleSize.height(), alignSize);
-            if (rst < 0)
+            if (numBytes < 0)
             {
-                logger.error("Could not fill image arrays for switched frame.");
+                char errStrBuf[AV_ERROR_MAX_STRING_SIZE];
+                logger.error("Could not fill image arrays for switched frame: code: {}, message: {}", numBytes, av_make_error_string(errStrBuf, AV_ERROR_MAX_STRING_SIZE, numBytes));
                 switchEnabled = false;
             }
             else
             {
-                if (isHardwareDecoded)
-                    hwSwsCtx.reset(checkAndGetCorrectSwsContext({ filteredFrame->width, filteredFrame->height }, hwTransferDstPixFormat, scaleSize, switchOptions.format, swsFlags));
+                // 分配缓冲区，并用智能指针管理，自动释放之前的缓冲区
+                bufferSwitchedFrame.reset(static_cast<uint8_t*>(av_malloc(numBytes)));
+                switchedFrame->format = switchOptions.format; // 设置新格式
+                // 转换为新格式的帧, switchedFrame->data将指向bufferSwitchedFrame所指向的内存
+                int rst = av_image_fill_arrays(switchedFrame->data, switchedFrame->linesize,
+                    bufferSwitchedFrame.get(), switchOptions.format,
+                    scaleSize.width(), scaleSize.height(), alignSize);
+                if (rst < 0)
+                {
+                    char errStrBuf[AV_ERROR_MAX_STRING_SIZE];
+                    logger.error("Could not fill image arrays for switched frame: code: {}, message: {}", rst, av_make_error_string(errStrBuf, AV_ERROR_MAX_STRING_SIZE, rst));
+                    switchEnabled = false;
+                }
                 else
                 {
-                    // 创建图像转换上下文, srcWidth,srcHeight,srcFormat,dstWidth,dstHeight,dstFormat
-                    swSwsCtx.reset(checkAndGetCorrectSwsContext({ filteredFrame->width, filteredFrame->height }, codecPixFmt, scaleSize, switchOptions.format, swsFlags));
+                    if (isHardwareDecoded)
+                        hwSwsCtx.reset(checkAndGetCorrectSwsContext({ filteredFrame->width, filteredFrame->height }, hwTransferDstPixFormat, scaleSize, switchOptions.format, swsFlags));
+                    else
+                    {
+                        // 创建图像转换上下文, srcWidth,srcHeight,srcFormat,dstWidth,dstHeight,dstFormat
+                        swSwsCtx.reset(checkAndGetCorrectSwsContext({ filteredFrame->width, filteredFrame->height }, codecPixFmt, scaleSize, switchOptions.format, swsFlags));
+                    }
                 }
             }
         }
@@ -598,16 +608,16 @@ void VideoPlayer::renderVideo()
         UniquePtr<AVFrame> autoUnrefSwFrame(swFrame.get(), [](AVFrame* frame) { if (frame) av_frame_unref(frame); });
 
         // 渲染视频帧
-        std::chrono::steady_clock::time_point timeBeforeRender = std::chrono::high_resolution_clock::now();
+        auto timeBeforeRender = std::chrono::high_resolution_clock::now();
         if (renderer)
             renderer(frameCtx, rendererUserData);
-        std::chrono::steady_clock::time_point timeAfterRender = std::chrono::high_resolution_clock::now();
+        auto timeAfterRender = std::chrono::high_resolution_clock::now();
         auto getFrameTimeInterval = timeBeforeTimeSync - timeBeforeGetFrame;
         auto timeSyncTimeInterval = timeBeforeSwitch - timeBeforeTimeSync;
         auto switchTimeInterval = timeBeforeRender - timeBeforeSwitch;
         auto renderTimeInterval = timeAfterRender - timeBeforeRender;
         auto frameRenderFullTime = getFrameTimeInterval + timeSyncTimeInterval + switchTimeInterval + renderTimeInterval;
-        logger.trace("Current frame: full time: {}, get frame time: {}, time sync time: {}, switch time: {}, render time: {}", frameRenderFullTime, getFrameTimeInterval, timeSyncTimeInterval, switchTimeInterval, renderTimeInterval);
+        logger.trace("Current frame: full time: {}, get frame time: {}, time sync time: {}, switch time: {}, render time: {}", frameRenderFullTime.count(), getFrameTimeInterval.count(), timeSyncTimeInterval.count(), switchTimeInterval.count(), renderTimeInterval.count());
         VideoRenderEvent videoRenderEvent{ &frameCtx };
         event(&videoRenderEvent);
     }
@@ -654,7 +664,7 @@ void VideoPlayer::renderVideo()
 
         if (avgDiff > 0.01)
         { // 10 ms 以上才处理
-            size_t delay = (avgDiff * 1000);
+            uint64_t delay = (avgDiff * 1000);
             if (delay > 0) // 如果avgDiff值很小，delay可能为0
             {
                 ThreadSleepMs(delay);

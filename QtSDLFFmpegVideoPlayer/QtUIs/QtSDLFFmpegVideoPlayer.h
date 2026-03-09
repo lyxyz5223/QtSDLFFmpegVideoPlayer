@@ -12,7 +12,7 @@
 #include <SystemVolumeController.h>
 
 // 处理视频预览缩略图
-#include <opencv2/opencv.hpp>
+// #include <opencv2/opencv.hpp>
 
 #ifdef USE_SDL_WIDGET
 #elif defined(USE_QT_MULTIMEDIA_WIDGET)
@@ -154,7 +154,6 @@ protected:
     virtual bool eventFilter(QObject* watched, QEvent* event) override;
 
 public slots:
-    void sdlEventLoop();
 
     void selectFilesAndPlay();
     void selectFolderAndPlay();
@@ -234,13 +233,15 @@ private:
     std::atomic<bool> isMediaSliderMoving{ false };
     std::atomic<int> mediaSeekingTime{ 0 };
 
-    constexpr static size_t PLAYER_STEP_LONG_MS = 15000; // 15s
-    constexpr static size_t PLAYER_STEP_SHORT_MS = 5000; // 5s
+    constexpr static uint64_t PLAYER_STEP_LONG_MS = 15000; // 15s
+    constexpr static uint64_t PLAYER_STEP_SHORT_MS = 5000; // 5s
 
     void createVideoWidget() {
 #ifdef USE_SDL_WIDGET
-        videoWidget = std::make_unique<VideoWidget>((HWND)ui.videoRenderWidget->winId(), "direct3d11");
+        // videoWidget = std::make_unique<VideoWidget>(ui.videoRenderWidget->winId(), "direct3d11");
+        videoWidget = std::make_unique<VideoWidget>(ui.videoRenderWidget->winId(), "");
         videoWidget->show();
+        // videoWidget->resize(1920, 1080, SDL_LOGICAL_PRESENTATION_STRETCH);
 #elif defined(USE_QT_MULTIMEDIA_WIDGET)
         videoWidget = new VideoWidget(ui.videoRenderWidget);
         ui.videoRenderWidget->layout()->addWidget(videoWidget);
@@ -270,12 +271,8 @@ private:
     }
 
     // 设置按钮为播放或暂停状态
-    void setPlayPauseButtonState(bool isPlaying) {
-        if (isPlaying)
-            ui.btnPlayPause->setIcon(QIcon(":/svgs/svgs/pause.svg"));
-        else
-            ui.btnPlayPause->setIcon(QIcon(":/svgs/svgs/play.svg"));
-    }
+    void setPlayPauseButtonState(bool isPlaying);
+
     // 设置音量按钮为静音或非静音状态
     void setVolumeButtonState(bool isMuted, double vol = -1) {
         if (isMuted)
@@ -337,7 +334,7 @@ private:
     // 根据滑块值（当前播放时间/ms）计算要seek到的时间，单位微秒
     template <typename T>
     static uint64_t calcSeekTimeFromMs(T value) {
-        return static_cast<size_t>(value) * (AV_TIME_BASE / 1000);
+        return static_cast<uint64_t>(value) * (AV_TIME_BASE / 1000);
     }
     // 根据毫秒计算时间字符串
     static QString msToQString(uint64_t milliseconds);
@@ -375,12 +372,12 @@ private:
     void playerSetEqualizerState(bool enabled) {
         mediaPlayer.setEqualizerState(enabled);
     }
-    void playerSetEqualizerGain(size_t bandIndex, double gain) {
+    void playerSetEqualizerGain(uint64_t bandIndex, double gain) {
         mediaPlayer.setEqualizerGain(bandIndex, { mediaPlayerAudioEqualizerDefaultGains[bandIndex].frequency, gain });
     }
     void playerSetEqualizerGains(const std::vector<double>& gains) {
         std::vector<AbstractPlayer::IFFmpegFrameAudioEqualizerFilter::BandInfo> newGains = mediaPlayer.getEqualizerGains();
-        for (size_t i = 0; i < gains.size(); ++i)
+        for (uint64_t i = 0; i < gains.size(); ++i)
             newGains[i].gain = gains[i];
         mediaPlayer.setEqualizerGains(newGains);
     }

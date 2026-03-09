@@ -1,6 +1,6 @@
 #pragma once
 #include <MediaPlayer.h>
-#include <QVideoWidget.h>
+#include <QVideoWidget>
 #include <QVideoFrameFormat>
 
 class QtMultiMediaPlayer : public MediaPlayer

@@ -14,7 +14,7 @@ bool Win32SystemVolumeController::registerSession()
     }
     // 存储信息
     session.events = pEvents;
-    logger.info("Successfully registered audio session notification.");
+    logger.info("Successfully register audio session notification.");
     return true;
 }
 

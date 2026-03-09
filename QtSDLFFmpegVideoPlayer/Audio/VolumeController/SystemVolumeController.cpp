@@ -4,7 +4,9 @@
 #include "Win32SystemVolumeController.h"
 using PlatformSystemVolumeController = Win32SystemVolumeController;
 #else
-#error "Unsupported platform for SystemVolumeController"
+// #error "Unsupported platform for SystemVolumeController"
+#include "LinuxSystemVolumeController.h"
+using PlatformSystemVolumeController = LinuxSystemVolumeController;
 #endif
 
 class SystemVolumeController::Impl {

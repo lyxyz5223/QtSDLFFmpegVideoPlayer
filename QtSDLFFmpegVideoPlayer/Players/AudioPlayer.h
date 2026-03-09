@@ -15,10 +15,10 @@ public:
     // 默认音频输出通道数
     static constexpr int DEFAULT_NUMBER_CHANNELS_AUDIO_OUTPUT = 1;
     // 下面两个常量需同时满足，解码才会暂停
-    static constexpr size_t MAX_AUDIO_PACKET_QUEUE_SIZE = 200; // 最大音频帧队列数量
-    //static constexpr size_t MAX_AUDIO_FRAME_QUEUE_SIZE = 200; // 最大音频帧队列数量
+    static constexpr uint64_t MAX_AUDIO_PACKET_QUEUE_SIZE = 200; // 最大音频帧队列数量
+    //static constexpr uint64_t MAX_AUDIO_FRAME_QUEUE_SIZE = 200; // 最大音频帧队列数量
     // 低于下列值开始继续读取新的帧，取出新的值后<下列值开始通知读取线程
-    static constexpr size_t MIN_AUDIO_PACKET_QUEUE_SIZE = 100; // 最小音频帧队列数量
+    static constexpr uint64_t MIN_AUDIO_PACKET_QUEUE_SIZE = 100; // 最小音频帧队列数量
     // 统一音频转换后用于播放的格式
     static constexpr AVSampleFormat AUDIO_OUTPUT_FORMAT = AVSampleFormat::AV_SAMPLE_FMT_S16;
     using AudioSampleFormatType = int16_t;
@@ -298,7 +298,7 @@ public:
     virtual void setEqualizerGains(const std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo>& gains) {
         playbackStateVariables.equalizerBandGains = gains;
     }
-    virtual void setEqualizerGain(size_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) {
+    virtual void setEqualizerGain(uint64_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) {
         if (bandIndex >= playbackStateVariables.equalizerBandGains.size())
             return;
         playbackStateVariables.equalizerBandGains[bandIndex] = gain;
@@ -407,7 +407,7 @@ protected:
         if (playbackStateVariables.codecCtx)
             avcodec_flush_buffers(playbackStateVariables.codecCtx.get());
     }
-    int64_t clockSync(size_t pts, StreamIndexType streamIndex, bool isStable) {
+    int64_t clockSync(uint64_t pts, StreamIndexType streamIndex, bool isStable) {
         if (streamIndex >= 0 && streamIndex < playbackStateVariables.formatCtx->nb_streams)
             playbackStateVariables.audioClock.store(pts * av_q2d(playbackStateVariables.formatCtx->streams[streamIndex]->time_base));
         else

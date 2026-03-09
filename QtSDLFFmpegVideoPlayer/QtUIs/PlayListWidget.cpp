@@ -291,7 +291,7 @@ void PlayListWidget::moveItems(int64_t offset, bool most)
     }
     if (offset < 0)
     {
-        size_t idxOffset{ 0 };
+        uint64_t idxOffset{ 0 };
         for (auto& idx : selIdxes)
         {
             if (!idx.isValid() || idx.row() >= m_playListModel->rowCount())
@@ -303,7 +303,7 @@ void PlayListWidget::moveItems(int64_t offset, bool most)
     }
     else
     {
-        size_t idxOffset{ 0 };
+        uint64_t idxOffset{ 0 };
         for (auto& idx : selIdxes)
         {
             auto rowCount = m_playListModel->rowCount();

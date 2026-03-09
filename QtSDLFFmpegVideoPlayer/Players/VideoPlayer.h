@@ -10,10 +10,10 @@ public:
     static constexpr int MIN_VIDEO_FRAME_QUEUE_SIZE = 15; // n frames
     // 用于ffmpeg视频解码和播放
     // 下面两个常量需同时满足，解码才会暂停
-    static constexpr size_t MAX_VIDEO_PACKET_QUEUE_SIZE = 200; // 最大视频帧队列数量
-    //static constexpr size_t MAX_AUDIO_FRAME_QUEUE_SIZE = 200; // 最大音频帧队列数量
+    static constexpr uint64_t MAX_VIDEO_PACKET_QUEUE_SIZE = 200; // 最大视频帧队列数量
+    //static constexpr uint64_t MAX_AUDIO_FRAME_QUEUE_SIZE = 200; // 最大音频帧队列数量
     // 低于下列值开始继续读取新的帧，取出新的值后<下列值开始通知读取线程
-    static constexpr size_t MIN_VIDEO_PACKET_QUEUE_SIZE = 100; // 最小视频帧队列数量
+    static constexpr uint64_t MIN_VIDEO_PACKET_QUEUE_SIZE = 100; // 最小视频帧队列数量
 
     static constexpr StreamTypes STREAM_TYPES = StreamType::STVideo;
 
@@ -289,7 +289,7 @@ public:
     virtual void setEqualizerState(bool enabled) {}
     virtual bool getEqualizerState() const { return false; }
     virtual void setEqualizerGains(const std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo>& gains) {}
-    virtual void setEqualizerGain(size_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) {}
+    virtual void setEqualizerGain(uint64_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) {}
     virtual std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo> getEqualizerGains() const { return {}; }
 
 
@@ -412,7 +412,7 @@ protected:
             avcodec_flush_buffers(playbackStateVariables.codecCtx.get());
     }
 
-    int64_t clockSync(size_t pts, StreamIndexType streamIndex, bool isStable) {
+    int64_t clockSync(uint64_t pts, StreamIndexType streamIndex, bool isStable) {
         if (streamIndex >= 0 && streamIndex < playbackStateVariables.formatCtx->nb_streams)
             playbackStateVariables.videoClock.store(pts * av_q2d(playbackStateVariables.formatCtx->streams[streamIndex]->time_base));
         else
@@ -537,7 +537,7 @@ private:
         YUV440P = AV_PIX_FMT_YUV440P,  ///< planar YUV 4:4:0 full scale (JPEG), deprecated in favor of AV_PIX_FMT_YUV440P and setting color_range
     };
     struct DeprecatedSupportedPixelFormatHashType {
-        size_t operator()(const DeprecatedPixelFormat& pixFmt) const {
+        uint64_t operator()(const DeprecatedPixelFormat& pixFmt) const {
             return static_cast<int>(pixFmt) % 7; // 12, 13, 14, 32映射到 5, 6, 7, 4
         }
     };

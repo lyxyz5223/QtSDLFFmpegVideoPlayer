@@ -94,7 +94,7 @@ public:
     static AVFilterGraphConstDeleter constDeleterAVFilterGraph;
 
 
-    //inline constexpr static auto ThreadSleepMs = [] (size_t duration) {
+    //inline constexpr static auto ThreadSleepMs = [] (uint64_t duration) {
     //    auto to = std::chrono::steady_clock::now() + std::chrono::milliseconds(duration);
     //    while (std::chrono::steady_clock::now() < to)
     //        std::this_thread::yield();  // 让出CPU时间片，降低资源占用
@@ -117,11 +117,11 @@ public:
     };
     // 定义：支持按位与或运算符的StreamType组合类型
     using StreamTypes = MultiEnumTypeDefine<StreamType>;
-    constexpr static size_t StreamTypeSize = sizeof(std::underlying_type_t<StreamType>); // StreamType枚举值字节数
-    constexpr static size_t StreamTypeCount = 5; // StreamType枚举值字节数
+    constexpr static uint64_t StreamTypeSize = sizeof(std::underlying_type_t<StreamType>); // StreamType枚举值字节数
+    constexpr static uint64_t StreamTypeCount = 5; // StreamType枚举值字节数
     // 返回false结束遍历，true继续遍历
     static void streamTypesVisit(StreamTypes streamTypes, std::function<bool(StreamType streamType, std::any userData)> visit, std::any userData = std::any{}) { // 遍历
-        size_t count = 0;
+        uint64_t count = 0;
         std::underlying_type_t<StreamType> max = (1 << (StreamTypeSize * 8 - 1));
         //memset(&max, 0xFF, StreamTypeSize); // 全1
         for (std::underlying_type_t<StreamType> i = STNone + 1; i <= max; i <<= 1/*左移1位*/)
@@ -178,8 +178,8 @@ public:
     static UniquePtr<AVFrame> makeUniqueFrame() {
         return UniquePtr<AVFrame>(av_frame_alloc(), constDeleterAVFrame);
     }
-    static UniquePtr<AVFrame> makeUniqueFrameNullptr() {
-        return UniquePtr<AVFrame>(nullptr, constDeleterAVFrame);
+    static UniquePtr<AVFrame> makeUniqueFrame(AVFrame* frame) {
+        return UniquePtr<AVFrame>(frame, constDeleterAVFrame);
     }
 
 
@@ -750,7 +750,7 @@ public:
             double gain{ 0.0 };
         };
         virtual const std::vector<BandInfo>& getBandGains() const = 0;
-        virtual bool setBandGain(size_t bandIndex, double gain) = 0;
+        virtual bool setBandGain(uint64_t bandIndex, double gain) = 0;
         virtual bool setBandGains(std::vector<BandInfo> gains) = 0;
         //virtual bool setBandGain(double frequency, double gain) = 0;
         virtual std::vector<BandInfo> getDefaultBandGains() const = 0;
@@ -790,14 +790,14 @@ public:
         virtual std::string getFilterArguments() const override {
             // 18-band equalizer with default flat settings
             std::string fmtStr;
-            for (size_t i = 0; i < bandGains.size(); ++i)
+            for (uint64_t i = 0; i < bandGains.size(); ++i)
                 fmtStr += LoggerFormatNS::format("{}b={}:", i + 1, bandGains[i].gain);
             if (bandGains.size())
                 fmtStr.pop_back(); // 移除最后一个冒号
             return fmtStr;
         }
         // 0~17对应1~18频段，增幅单位：倍
-        virtual bool setBandGain(size_t bandIndex, double gain) override {
+        virtual bool setBandGain(uint64_t bandIndex, double gain) override {
             if (bandIndex > bandGains.size())
                 return false;
             bandGains[bandIndex].gain = gain;
@@ -807,7 +807,7 @@ public:
             if (gains.size() != bandGains.size())
                 return false;
             bool rst = true;
-            for (size_t i = 0; i < gains.size(); ++i)
+            for (uint64_t i = 0; i < gains.size(); ++i)
             {
                 if (bandGains[i].gain != gains[i].gain)
                 {
@@ -848,7 +848,7 @@ public:
         std::vector<BandInfo> bandGains = std::vector<BandInfo>{ defaultBandGains() }; // 每个频段的增益，单位dB
         std::string getGainEntryString() const {
             std::string fmtStr;
-            for (size_t i = 0; i < bandGains.size(); ++i)
+            for (uint64_t i = 0; i < bandGains.size(); ++i)
                 fmtStr += LoggerFormatNS::format("entry({},{});", bandGains[i].frequency, bandGains[i].gain);
             if (bandGains.size())
                 fmtStr.pop_back();
@@ -862,7 +862,7 @@ public:
             return "gain='gain_interpolate(f)':gain_entry='" + getGainEntryString() + "'";
         }
         // 0~9对应1~10频段，增幅单位：dB（分贝）
-        virtual bool setBandGain(size_t bandIndex, double gain) override {
+        virtual bool setBandGain(uint64_t bandIndex, double gain) override {
             if (bandIndex > bandGains.size())
                 return false;
             bandGains[bandIndex].gain = gain;
@@ -872,7 +872,7 @@ public:
             if (gains.size() != bandGains.size())
                 return false;
             bool equal = true;
-            for (size_t i = 0; i < gains.size(); ++i)
+            for (uint64_t i = 0; i < gains.size(); ++i)
             {
                 if (bandGains[i].gain != gains[i].gain)
                 {
@@ -1339,15 +1339,15 @@ public:
 
     // 解复用器接口
     struct AbstractDemuxer {
-        static constexpr size_t defaultMaxPacketQueueSize = 200;
-        static constexpr size_t defaultMinPacketQueueSize = 100;
+        static constexpr uint64_t defaultMaxPacketQueueSize = 200;
+        static constexpr uint64_t defaultMinPacketQueueSize = 100;
         struct StreamContext {
             StreamType type{ StreamType::STNone };
             StreamIndexType index{ -1 };
             ConcurrentQueue<AVPacket*> packetQueue;
             // 包队列最大最小值
-            size_t maxPacketQueueSize = defaultMaxPacketQueueSize;
-            size_t minPacketQueueSize = defaultMinPacketQueueSize;
+            uint64_t maxPacketQueueSize = defaultMaxPacketQueueSize;
+            uint64_t minPacketQueueSize = defaultMinPacketQueueSize;
             std::function<void()> packetEnqueueCallback{ nullptr }; // 每次成功入队一个AVPacket后调用的回调函数，回调调用时将暂停解码
             StreamContext(StreamType type) : type(type) {}
         };
@@ -1363,8 +1363,8 @@ public:
         virtual AVPacket* getOnePacket() = 0;
         // 让解复用器读取一个合适的包，并存入队列，可以通过参数获取到读取到的包
         virtual bool readOnePacket(AVPacket** pkt = nullptr) = 0;
-        virtual void setMaxPacketQueueSize(StreamType type, size_t size) = 0;
-        virtual void setMinPacketQueueSize(StreamType type, size_t size) = 0;
+        virtual void setMaxPacketQueueSize(StreamType type, uint64_t size) = 0;
+        virtual void setMinPacketQueueSize(StreamType type, uint64_t size) = 0;
         virtual void flushPacketQueue(StreamType type) = 0;
         virtual void reset() = 0;
         virtual void setPacketEnqueueCallback(StreamType type, const std::function<void()>& callback) = 0;
@@ -1379,8 +1379,8 @@ public:
         virtual StreamTypes findStreamTypes() const = 0;
         // StreamContext
         virtual StreamIndexType getStreamIndex(StreamType type) const = 0;
-        virtual size_t getMaxPacketQueueSize(StreamType type) const = 0;
-        virtual size_t getMinPacketQueueSize(StreamType type) const = 0;
+        virtual uint64_t getMaxPacketQueueSize(StreamType type) const = 0;
+        virtual uint64_t getMinPacketQueueSize(StreamType type) const = 0;
         virtual ConcurrentQueue<AVPacket*>* getPacketQueue(StreamType type) = 0;
 
         // 高级api
@@ -1431,8 +1431,8 @@ public:
         // 解复用器线程
         std::thread demuxerThread;
         // 包队列最大最小值
-        size_t maxPacketQueueSize = defaultMaxPacketQueueSize;
-        size_t minPacketQueueSize = defaultMinPacketQueueSize;
+        uint64_t maxPacketQueueSize = defaultMaxPacketQueueSize;
+        uint64_t minPacketQueueSize = defaultMinPacketQueueSize;
         std::function<void()> packetEnqueueCallback{ nullptr }; // 每次成功入队一个AVPacket后调用的回调函数，回调调用时将暂停解码
 
         StreamTypes foundStreamTypes{ StreamType::STNone };
@@ -1454,10 +1454,10 @@ public:
         /**/bool selectStreamIndex(StreamIndexSelector selector) { return selectStreamIndex(this->streamType, selector); }
         virtual AVPacket* getOnePacket() override;
         virtual bool readOnePacket(AVPacket** pkt = nullptr) override;
-        virtual void setMaxPacketQueueSize(StreamType type, size_t size) override { if (type == streamType) maxPacketQueueSize = size; }
-        virtual void setMinPacketQueueSize(StreamType type, size_t size) override { if (type == streamType) minPacketQueueSize = size; }
-        /*非虚函数*/void setMaxPacketQueueSize(size_t size) { maxPacketQueueSize = size; }
-        /*非虚函数*/void setMinPacketQueueSize(size_t size) { minPacketQueueSize = size; }
+        virtual void setMaxPacketQueueSize(StreamType type, uint64_t size) override { if (type == streamType) maxPacketQueueSize = size; }
+        virtual void setMinPacketQueueSize(StreamType type, uint64_t size) override { if (type == streamType) minPacketQueueSize = size; }
+        /*非虚函数*/void setMaxPacketQueueSize(uint64_t size) { maxPacketQueueSize = size; }
+        /*非虚函数*/void setMinPacketQueueSize(uint64_t size) { minPacketQueueSize = size; }
         virtual void flushPacketQueue(StreamType type) override { if (type == streamType) flushPacketQueue(); }
         /*非虚函数*/void flushPacketQueue();
         // 仅仅重置状态，不关闭文件，不改变maxPacketQueueSize和minPacketQueueSize
@@ -1479,8 +1479,8 @@ public:
         virtual StreamTypes getStreamTypes() const override { return foundStreamTypes; }
         virtual StreamTypes getOrFindStreamTypes() override { if (foundStreamTypes == StreamType::STNone) foundStreamTypes = findStreamTypes(); return foundStreamTypes; }
         virtual StreamTypes findStreamTypes() const override { if (!opened || !formatCtx) /*未打开文件*/ return StreamType::STNone; return AbstractDemuxer::findStreamTypes(formatCtx.get()); }
-        virtual size_t getMaxPacketQueueSize(StreamType type) const override { if (type != streamType) return 0; return maxPacketQueueSize; }
-        virtual size_t getMinPacketQueueSize(StreamType type) const override { if (type != streamType) return 0; return minPacketQueueSize; }
+        virtual uint64_t getMaxPacketQueueSize(StreamType type) const override { if (type != streamType) return 0; return maxPacketQueueSize; }
+        virtual uint64_t getMinPacketQueueSize(StreamType type) const override { if (type != streamType) return 0; return minPacketQueueSize; }
         virtual ConcurrentQueue<AVPacket*>* getPacketQueue(StreamType type) override { if (type != streamType) return nullptr; return &packetQueue; }
         /*非虚函数*/ConcurrentQueue<AVPacket*>& getPacketQueue() { return packetQueue; }
         // 高级api
@@ -1545,8 +1545,8 @@ public:
         virtual bool selectStreamsIndexes(StreamTypes streams, StreamIndexSelector selector) override;
         virtual bool readOnePacket(AVPacket** pkt = nullptr) override;
         virtual AVPacket* getOnePacket() override;
-        virtual void setMaxPacketQueueSize(StreamType type, size_t size) override { auto it = streamContexts.find(type); if (it != streamContexts.end()) it->second.maxPacketQueueSize = size; }
-        virtual void setMinPacketQueueSize(StreamType type, size_t size) override { auto it = streamContexts.find(type); if (it != streamContexts.end()) it->second.minPacketQueueSize = size; }
+        virtual void setMaxPacketQueueSize(StreamType type, uint64_t size) override { auto it = streamContexts.find(type); if (it != streamContexts.end()) it->second.maxPacketQueueSize = size; }
+        virtual void setMinPacketQueueSize(StreamType type, uint64_t size) override { auto it = streamContexts.find(type); if (it != streamContexts.end()) it->second.minPacketQueueSize = size; }
         virtual void flushPacketQueue(StreamType type) override;
         // 仅仅重置状态，不关闭文件，不改变maxPacketQueueSize和minPacketQueueSize
         virtual void reset() override;
@@ -1577,8 +1577,8 @@ public:
         virtual StreamTypes getStreamTypes() const override { return foundStreamTypes; }
         virtual StreamTypes getOrFindStreamTypes() override { if (foundStreamTypes == StreamType::STNone) foundStreamTypes = findStreamTypes(); return foundStreamTypes; }
         virtual StreamTypes findStreamTypes() const override { if (!opened || !formatCtx) /*未打开文件*/ return StreamType::STNone; return AbstractDemuxer::findStreamTypes(formatCtx.get()); }
-        virtual size_t getMaxPacketQueueSize(StreamType type) const override { auto it = streamContexts.find(type); if (it != streamContexts.end()) return it->second.maxPacketQueueSize; return defaultMaxPacketQueueSize; }
-        virtual size_t getMinPacketQueueSize(StreamType type) const override { auto it = streamContexts.find(type); if (it != streamContexts.end()) return it->second.minPacketQueueSize; return defaultMinPacketQueueSize; }
+        virtual uint64_t getMaxPacketQueueSize(StreamType type) const override { auto it = streamContexts.find(type); if (it != streamContexts.end()) return it->second.maxPacketQueueSize; return defaultMaxPacketQueueSize; }
+        virtual uint64_t getMinPacketQueueSize(StreamType type) const override { auto it = streamContexts.find(type); if (it != streamContexts.end()) return it->second.minPacketQueueSize; return defaultMinPacketQueueSize; }
         virtual ConcurrentQueue<AVPacket*>* getPacketQueue(StreamType type) override { auto it = streamContexts.find(type); if (it != streamContexts.end()) return &it->second.packetQueue; return nullptr; }
         // 高级api
         // 创建读取线程，启动解复用器，仅初次调用有效，直到线程结束
@@ -1657,7 +1657,7 @@ public:
     static bool findStreamInfo(Logger* logger, AVFormatContext* formatCtx);
     static bool readFrame(Logger* logger, AVFormatContext* fmtCtx, AVPacket*& packet, bool allocPacket = true, bool* isEof = nullptr);
     static bool findAndOpenAudioDecoder(Logger* logger, AVFormatContext* formatCtx, StreamIndexType streamIndex, UniquePtr<AVCodecContext>& codecContext);
-    static bool findAndOpenVideoDecoder(Logger* logger, AVFormatContext* formatCtx, StreamIndexType streamIndex, UniquePtr<AVCodecContext>& codecContext, bool useHardwareDecoder = false, size_t hardwareExtraFrameCount = 20, AVHWDeviceType* hwDeviceType = nullptr, AVPixelFormat* hwPixelFormat = nullptr);
+    static bool findAndOpenVideoDecoder(Logger* logger, AVFormatContext* formatCtx, StreamIndexType streamIndex, UniquePtr<AVCodecContext>& codecContext, bool useHardwareDecoder = false, uint64_t hardwareExtraFrameCount = 20, AVHWDeviceType* hwDeviceType = nullptr, AVPixelFormat* hwPixelFormat = nullptr);
     static void listAllHardwareDecoders(Logger* logger);
     // fromType 表示从AVHWDeviceType的哪一个的下一个开始遍历查找
     // hwDeviceType与hwPixelFormat为输出
@@ -1735,7 +1735,7 @@ public:
     virtual void setEqualizerState(bool enabled) = 0;
     virtual bool getEqualizerState() const = 0;
     virtual void setEqualizerGains(const std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo>& gains) = 0;
-    virtual void setEqualizerGain(size_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) = 0;
+    virtual void setEqualizerGain(uint64_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) = 0;
     virtual std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo> getEqualizerGains() const = 0;
 
     virtual void notifySeek(uint64_t pts, StreamIndexType streamIndex = -1) = 0;
@@ -1770,8 +1770,8 @@ public:
     virtual void setExternalRequestTaskQueueHandler(const SharedPtr<RequestTaskQueueHandler>& handler) = 0;
 
     // 方法一
-    //virtual void addEventHandler(size_t handlerId, std::function<void(const MediaEventType& eventType, const std::any& eventData)> handler) = 0;
-    //virtual void removeEventHandler(size_t handlerId) = 0;
+    //virtual void addEventHandler(uint64_t handlerId, std::function<void(const MediaEventType& eventType, const std::any& eventData)> handler) = 0;
+    //virtual void removeEventHandler(uint64_t handlerId) = 0;
 
     // 方法二
 protected:

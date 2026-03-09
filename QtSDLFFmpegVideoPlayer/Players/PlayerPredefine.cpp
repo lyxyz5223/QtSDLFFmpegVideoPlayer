@@ -29,7 +29,7 @@ std::string PlayerTypes::MediaEventType::name() const
 	return std::string{};
 }
 
-std::string PlayerTypes::PlayerStateEnum::getName(PlayerTypes::PlayerState value) {
+template<> std::string PlayerTypes::PlayerStateEnum::getName(PlayerTypes::PlayerState value) {
     switch (value)
     {
         EnumValueToStringCase(PlayerTypes::PlayerState, Stopped);
@@ -43,7 +43,7 @@ std::string PlayerTypes::PlayerStateEnum::getName(PlayerTypes::PlayerState value
     }
     return std::string{};
 }
-std::string PlayerTypes::PlayerStateEnum::name() const {
+template<> std::string PlayerTypes::PlayerStateEnum::name() const {
     return getName(value());
 }
 
@@ -236,7 +236,7 @@ bool MediaDecodeUtils::findAndOpenAudioDecoder(Logger* logger, AVFormatContext* 
     codecContext.reset(codecCtx);
     return true;
 }
-bool MediaDecodeUtils::findAndOpenVideoDecoder(Logger* logger, AVFormatContext* formatCtx, StreamIndexType streamIndex, UniquePtr<AVCodecContext>& codecContext, bool useHardwareDecoder, size_t hardwareExtraFrameCount, AVHWDeviceType* hwDeviceType, AVPixelFormat* hwPixelFormat)
+bool MediaDecodeUtils::findAndOpenVideoDecoder(Logger* logger, AVFormatContext* formatCtx, StreamIndexType streamIndex, UniquePtr<AVCodecContext>& codecContext, bool useHardwareDecoder, uint64_t hardwareExtraFrameCount, AVHWDeviceType* hwDeviceType, AVPixelFormat* hwPixelFormat)
 {
     if (streamIndex < 0)
     {
@@ -307,7 +307,7 @@ void MediaDecodeUtils::listAllHardwareDecoders(Logger* logger)
     // 列举所有支持的硬件解码器类型
     AVHWDeviceType type = AV_HWDEVICE_TYPE_NONE;
     logger->info("Find hardware decoders:");
-    for (size_t i = 1; (type/*current type*/ = av_hwdevice_iterate_types(type/*previous type*/)) != AV_HWDEVICE_TYPE_NONE; ++i)
+    for (uint64_t i = 1; (type/*current type*/ = av_hwdevice_iterate_types(type/*previous type*/)) != AV_HWDEVICE_TYPE_NONE; ++i)
     {
         logger->info("\t decoder {}: {}", i, av_hwdevice_get_type_name(type));
     }
@@ -319,7 +319,7 @@ AVHWDeviceType MediaDecodeUtils::findHardwareDecoder(Logger* logger, const AVCod
     for (AVHWDeviceType type = fromType; (type/*current type*/ = av_hwdevice_iterate_types(type/*previous type*/)) != AV_HWDEVICE_TYPE_NONE; )
     {
         bool found = false;
-        for (size_t i = 0; ; ++i)
+        for (uint64_t i = 0; ; ++i)
         {
             const AVCodecHWConfig* config = avcodec_get_hw_config(codec, i);
             if (!config)
@@ -367,7 +367,7 @@ PlayerTypes::StreamTypes PlayerTypes::AbstractDemuxer::findStreamTypes(AVFormatC
 {
     StreamTypes rst = StreamType::STNone;
     // 查找视频流和音频流
-    for (size_t i = 0; i < formatCtx->nb_streams; ++i)
+    for (uint64_t i = 0; i < formatCtx->nb_streams; ++i)
     {
         AVCodecParameters* codecPar = formatCtx->streams[i]->codecpar;
         switch (codecPar->codec_type)
@@ -1163,7 +1163,7 @@ bool PlayerTypes::FFmpegFrameFilterGraph::linkFilters()
     if (!IFFmpegFrameFilter::createSrcSinkFilterCtx(this->streamType, this->getAVFilterGraph(), this->codecCtx, this->formatCtx, this->streamIndex, this->srcFilterCtx, this->sinkFilterCtx))
         return false;
     AVFilterContext* prevFilterCtx{ this->srcFilterCtx }; // 首个链接srcFilter
-    size_t failedCount = 0;
+    uint64_t failedCount = 0;
     bool failed = false;
     for (const auto& filter : filterList)
     {

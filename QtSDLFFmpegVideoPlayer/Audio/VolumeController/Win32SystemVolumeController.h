@@ -142,7 +142,7 @@ class Win32SystemVolumeController : public ISystemVolumeController
     //        }
     //        // 存储信息
     //        sessions.emplace_back(pSessionControl, pSessionControl2, pEvents, pid);
-    //        logger.info("Successfully registered audio session notification for PID: {}", pid);
+    //        logger.info("Successfully register audio session notification for PID: {}", pid);
     //        return true;
     //    }
     //    pSessionEnumerator->Release();
@@ -161,12 +161,6 @@ class Win32SystemVolumeController : public ISystemVolumeController
     }
 
     bool init();
-
-    // 设置静音
-    void setMute(bool bMute) {
-        if (endpointVolume)
-            endpointVolume->SetMute(bMute, NULL);
-    }
 
     // 清理资源
     void cleanUp();

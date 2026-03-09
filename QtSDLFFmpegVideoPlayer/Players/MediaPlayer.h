@@ -98,7 +98,7 @@ public:
         void clearBuffers() {
             VideoPlayer::clearBuffers();
         }
-        int64_t clockSync(size_t pts, StreamIndexType streamIndex, bool isStable) {
+        int64_t clockSync(uint64_t pts, StreamIndexType streamIndex, bool isStable) {
             return VideoPlayer::clockSync(pts, streamIndex, isStable);
         }
     };
@@ -109,7 +109,7 @@ public:
         void clearBuffers() {
             AudioPlayer::clearBuffers();
         }
-        int64_t clockSync(size_t pts, StreamIndexType streamIndex, bool isStable) {
+        int64_t clockSync(uint64_t pts, StreamIndexType streamIndex, bool isStable) {
             return AudioPlayer::clockSync(pts, streamIndex, isStable);
         }
         MediaAudioPlayer(MediaPlayer& player) : player(player) {}
@@ -462,7 +462,7 @@ public:
     virtual void setEqualizerGains(const std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo>& gains) {
         audioPlayer->setEqualizerGains(gains);
     }
-    virtual void setEqualizerGain(size_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) {
+    virtual void setEqualizerGain(uint64_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) {
         audioPlayer->setEqualizerGain(bandIndex, gain);
     }
     virtual std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo> getEqualizerGains() const {
@@ -494,10 +494,10 @@ public:
     }
 
     virtual bool isPlaying() const override {
-        return audioPlayer->isPlaying() && videoPlayer->isPlaying() && isPlayingFlag.get();
+        return (audioPlayer->isPlaying() || videoPlayer->isPlaying()) && isPlayingFlag.get();
     }
     virtual bool isPaused() const override {
-        return audioPlayer->isPaused() && videoPlayer->isPaused() && isPlayingFlag.get();
+        return (audioPlayer->isPaused() || videoPlayer->isPaused()) && isPlayingFlag.get();
     }
     virtual bool isStopped() const override {
         return audioPlayer->isStopped() && videoPlayer->isStopped() && !isPlayingFlag.get();

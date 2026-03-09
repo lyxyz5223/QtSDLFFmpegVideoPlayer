@@ -2,16 +2,19 @@
 #include <SDL3/SDL_surface.h>
 #include <SDL3/SDL_video.h>
 #include <SDL3/SDL.h>
+#include <string>
 #ifdef _WIN32
 #include <wtypes.h>
-#include <string>
 typedef HWND SDLWindowHandle;
 #define SDLWindowHandleInvalid 0
 #elif defined(__APPLE__)
 typedef void* SDLWindowHandle;
 #define SDLWindowHandleInvalid nullptr
-#else // Linux and others
-typedef uint32_t SDLWindowHandle;
+#elif defined(__linux__) // Linux
+typedef long SDLWindowHandle;
+#define SDLWindowHandleInvalid 0
+#else
+typedef long SDLWindowHandle;
 #define SDLWindowHandleInvalid 0
 #endif
 
@@ -25,27 +28,8 @@ private:
 public:
     // SDL_GetRenderDriver
     // \param renderDriverName 渲染器名称，如"direct3d11"、"opengl"等，传入空字符串表示SDL自动选择
-    SDLWidget(SDLWidget* parent, const std::string& renderDriverName = "")
-        : m_parentWinId(parent->m_parentWinId) {
-        if (parent && parent->m_parentWinId != SDLWindowHandleInvalid)
-        {
-            SDL_PropertiesID props = SDL_CreateProperties();
-            SDL_SetPointerProperty(props, SDL_PROP_WINDOW_CREATE_WIN32_HWND_POINTER, (void*)parent->m_parentWinId);
-            m_window = SDL_CreateWindowWithProperties(props);
-            if (m_window)
-                m_renderer = SDL_CreateRenderer(m_window, renderDriverName.size() ? renderDriverName.c_str() : nullptr);
-        }
-    }
-    SDLWidget(SDLWindowHandle parent, const std::string& renderDriverName = "") : m_parentWinId(parent) {
-        if (parent != SDLWindowHandleInvalid)
-        {
-            SDL_PropertiesID props = SDL_CreateProperties();
-            SDL_SetPointerProperty(props, SDL_PROP_WINDOW_CREATE_WIN32_HWND_POINTER, (void*)parent);
-            m_window = SDL_CreateWindowWithProperties(props);
-            if (m_window)
-                m_renderer = SDL_CreateRenderer(m_window, renderDriverName.size() ? renderDriverName.c_str() : nullptr);
-        }
-    }
+    SDLWidget(SDLWidget* parent, const std::string& renderDriverName = "");
+    SDLWidget(long parent, const std::string& renderDriverName = "");
     ~SDLWidget() {
         if (m_renderer)
             SDL_DestroyRenderer(m_renderer);
@@ -76,7 +60,7 @@ public:
         if (m_parentWinId == SDLWindowHandleInvalid)
             return false;
         SDL_PropertiesID props = SDL_CreateProperties();
-        SDL_SetPointerProperty(props, SDL_PROP_WINDOW_CREATE_WIN32_HWND_POINTER, (void*)m_parentWinId);
+        SDL_SetPointerProperty(props, SDL_PROP_WINDOW_CREATE_WIN32_HWND_POINTER, reinterpret_cast<void*>(m_parentWinId));
         m_window = SDL_CreateWindowWithProperties(props);
         return m_window;
     }

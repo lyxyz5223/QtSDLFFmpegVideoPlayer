@@ -8,7 +8,7 @@
 RoundedIconButton::RoundedIconButton(QWidget* parent)
     : QPushButton(parent)
 {
-    setAttribute(Qt::WA_TranslucentBackground);
+    // setAttribute(Qt::WA_TranslucentBackground);
     setFlat(true);
     setMouseTracking(true);
 }

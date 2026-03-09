@@ -11,7 +11,14 @@
 #include <QMediaPlayer>
 #else
 #endif
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
+#define ID_TASKBAR_BUTTON_PLAY_PREVIOUS 0
+#define ID_TASKBAR_BUTTON_PLAY_PAUSE 1
+#define ID_TASKBAR_BUTTON_PLAY_STOP 2
+#define ID_TASKBAR_BUTTON_PLAY_NEXT 3
 
 QtSDLFFmpegVideoPlayer::QtSDLFFmpegVideoPlayer(QWidget* parent)
     : QMainWindow(parent)
@@ -24,15 +31,30 @@ QtSDLFFmpegVideoPlayer::QtSDLFFmpegVideoPlayer(QWidget* parent)
     ui.videoRenderWidget->show();
     // 创建SDL窗口和渲染器
     createVideoWidget();
-    taskbarMediaController.initialize(reinterpret_cast<HWND>(this->winId())); // 初始化任务栏媒体控制器
+    taskbarMediaController.initialize(this->winId()); // 初始化任务栏媒体控制器
 
     // 启动SDL事件循环定时器，单次触发，间隔0ms
+#ifdef USE_SDL_WIDGET
     sdlEventTimer = new QTimer(this);
+#ifdef _WIN32
     sdlEventTimer->setSingleShot(true);
     sdlEventTimer->setInterval(0);
-    sdlEventTimer->connect(sdlEventTimer, &QTimer::timeout, this, &QtSDLFFmpegVideoPlayer::sdlEventLoop);
+    sdlEventTimer->connect(sdlEventTimer, &QTimer::timeout, this, [] {
+        SDLApp::instance()->runEventLoop();
+    });
+#else
+    sdlEventTimer->setSingleShot(false);
+    sdlEventTimer->setInterval(1);
+    sdlEventTimer->connect(sdlEventTimer, &QTimer::timeout, this, [] {
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+        }
+    });
+#endif
     sdlEventTimer->start();
-
+#elif defined(USE_QT_MULTIMEDIA_WIDGET)
+#else
+#endif
     // 绑定菜单列表
     connect(ui.actionOpenFiles, SIGNAL(triggered()), this, SLOT(selectFilesAndPlay()));
     connect(ui.actionOpenFolder, SIGNAL(triggered()), this, SLOT(selectFolderAndPlay()));
@@ -112,8 +134,9 @@ QtSDLFFmpegVideoPlayer::QtSDLFFmpegVideoPlayer(QWidget* parent)
     videoPreviewThumbnailWidget->setScaledContents(true);
     videoPreviewThumbnailWidget->installEventFilter(this);
     ui.sliderMediaProgress->installEventFilter(this);
-    show();
-    taskbarMediaController.addThumbBarButtons();
+    installEventFilter(this);
+    show(); // 在show之后才设置任务栏媒体控制器按钮，否则可能会出现按钮不显示的问题
+
 }
 
 QtSDLFFmpegVideoPlayer::~QtSDLFFmpegVideoPlayer()
@@ -123,17 +146,83 @@ QtSDLFFmpegVideoPlayer::~QtSDLFFmpegVideoPlayer()
 
 bool QtSDLFFmpegVideoPlayer::nativeEvent(const QByteArray & eventType, void* message, qintptr * result)
 {
+#ifdef _WIN32
+    if (eventType == "windows_generic_MSG")
+    {
+        static UINT WM_TASKBARBUTTONCREATED = 0; // WM_TaskbarButtonCreated
+        if (!WM_TASKBARBUTTONCREATED)
+        {
+            WM_TASKBARBUTTONCREATED = RegisterWindowMessage(L"TaskbarButtonCreated");
+            ChangeWindowMessageFilter(WM_TASKBARBUTTONCREATED, MSGFLT_ADD);
+        }
+        MSG* msg = static_cast<MSG*>(message);
+        switch (msg->message)
+        {
+        case WM_COMMAND:
+        {
+            UINT taskbarBtnId = LOWORD(msg->wParam);
+            if (taskbarBtnId == ID_TASKBAR_BUTTON_PLAY_PREVIOUS)
+            {
+                logger.trace("Taskbar previous button clicked.");
+                mediaPrevious();
+            }
+            else if (taskbarBtnId == ID_TASKBAR_BUTTON_PLAY_PAUSE)
+            {
+                logger.trace("Taskbar play/pause button clicked.");
+                mediaPlayPause();
+            }
+            else if (taskbarBtnId == ID_TASKBAR_BUTTON_PLAY_STOP)
+            {
+                logger.trace("Taskbar stop button clicked.");
+                mediaStop();
+            }
+            else if (taskbarBtnId == ID_TASKBAR_BUTTON_PLAY_NEXT)
+            {
+                logger.trace("Taskbar next button clicked.");
+                mediaNext();
+            }
+            break;
+        }
+        default:
+        {
+            if (msg->message == WM_TASKBARBUTTONCREATED)
+            {
+                std::vector<ITaskbarMediaController::ThumbBarButton> thumbBarBtns(4);
+                // 上一首按钮
+                thumbBarBtns[0].id = ID_TASKBAR_BUTTON_PLAY_PREVIOUS;
+                thumbBarBtns[0].icon = QIcon(":/svgs/svgs/skip-prev.svg");
+                thumbBarBtns[0].tipText = "上一首";
+                // 播放/暂停按钮
+                thumbBarBtns[1].id = ID_TASKBAR_BUTTON_PLAY_PAUSE;
+                thumbBarBtns[1].icon = QIcon(":/svgs/svgs/play.svg");
+                thumbBarBtns[1].tipText = "播放/暂停";
+                // 停止按钮
+                thumbBarBtns[2].id = ID_TASKBAR_BUTTON_PLAY_STOP;
+                thumbBarBtns[2].icon = QIcon::fromTheme(QIcon::ThemeIcon::MediaPlaybackStop);
+                thumbBarBtns[2].tipText = "停止";
+                // 下一首按钮
+                thumbBarBtns[3].id = ID_TASKBAR_BUTTON_PLAY_NEXT;
+                thumbBarBtns[3].icon = QIcon(":/svgs/svgs/skip-next.svg");
+                thumbBarBtns[3].tipText = "下一首";
+                taskbarMediaController.addThumbBarButtons(thumbBarBtns);
+            }
+            break;
+        }
+        }
+    }
+#else
+#endif
     return false;
 }
 
 void QtSDLFFmpegVideoPlayer::closeEvent(QCloseEvent* e)
 {
     playerStop();
+#ifdef USE_SDL_WIDGET
     sdlEventTimer->stop();
     sdlEventTimer->disconnect();
     sdlEventTimer->deleteLater();
-#ifdef USE_SDL_WIDGET
-    //SDLApp::instance()->stopEventLoopAsync();
+    SDLApp::instance()->stopEventLoopAsync();
 #elif defined(USE_QT_MULTIMEDIA_WIDGET)
 #else
 #endif
@@ -151,7 +240,7 @@ void QtSDLFFmpegVideoPlayer::resizeEvent(QResizeEvent* e)
 
 bool QtSDLFFmpegVideoPlayer::eventFilter(QObject* watched, QEvent* event)
 {
-    if (watched == nullptr)
+    if (watched == this)
     {
         return false;
     }
@@ -187,7 +276,7 @@ bool QtSDLFFmpegVideoPlayer::eventFilter(QObject* watched, QEvent* event)
                 if (previewCurrentTimeMs / 1000 - seekToTimeMs / 1000 < 5)
                     break;
             }
-            logger.info("Preview thumbnail seek time: {} ms, time string: {}", seekToTimeMs, msToQString(seekToTimeMs).toStdString());
+            logger.trace("Preview thumbnail seek time: {} ms, time string: {}", seekToTimeMs, msToQString(seekToTimeMs).toStdString());
             previewCurrentTimeMs = seekToTimeMs;
             auto seekToPts = calcSeekTimeFromMs(seekToTimeMs);
             if (av_seek_frame(previewDemuxer->getFormatContext(), -1/*previewDemuxer->getStreamIndex()*/, seekToPts, AVSEEK_FLAG_BACKWARD) < 0) // 定位到指定时间戳附近的关键帧
@@ -264,14 +353,6 @@ bool QtSDLFFmpegVideoPlayer::eventFilter(QObject* watched, QEvent* event)
     return false;
 }
 
-void QtSDLFFmpegVideoPlayer::sdlEventLoop()
-{
-#ifdef USE_SDL_WIDGET
-    SDLApp::instance()->runEventLoop();
-#elif defined(USE_QT_MULTIMEDIA_WIDGET)
-#else
-#endif
-}
 
 void QtSDLFFmpegVideoPlayer::selectFilesAndPlay()
 {
@@ -363,6 +444,22 @@ void QtSDLFFmpegVideoPlayer::mediaVolumeSliderValueChanged(int value)
 void QtSDLFFmpegVideoPlayer::mediaOpenPlayOptionsDialog()
 {
     optionsWidget->show();
+}
+
+void QtSDLFFmpegVideoPlayer::setPlayPauseButtonState(bool isPlaying)
+{
+    QIcon icon;
+    if (isPlaying)
+    {
+        icon = QIcon(":/svgs/svgs/pause.svg");
+        ui.btnPlayPause->setIcon(icon);
+    }
+    else
+    {
+        icon = QIcon(":/svgs/svgs/play.svg");
+        ui.btnPlayPause->setIcon(icon);
+    }
+    taskbarMediaController.updateThumbBarButton({ ID_TASKBAR_BUTTON_PLAY_PAUSE, icon, "播放/暂停" });
 }
 
 QString QtSDLFFmpegVideoPlayer::msToQString(uint64_t milliseconds)
@@ -482,17 +579,17 @@ void QtSDLFFmpegVideoPlayer::playerPlay(QString filePath)
     std::thread([this, filePath]() {
         mediaPlayer.stop();
         resetMediaPlayerStates();
-#ifdef USE_SDL_WIDGET
-        mediaPlayer.play(filePath.toStdString(), SDLApp::getWindowId(videoWidget->getSDLWindow()), true);
-#elif defined(USE_QT_MULTIMEDIA_WIDGET)
         std::unique_lock lock(mtxPreviewDemuxer);
         previewDemuxer->close();
         previewDemuxer->open(filePath.toStdString());
         previewDemuxer->findStreamInfo();
         previewSwsCtx.reset(nullptr);
-        lock.unlock();
-        mediaPlayer.play(filePath.toStdString(), videoWidget, true);
         //previewVideoCapture.open(filePath.toStdString());
+        lock.unlock();
+#ifdef USE_SDL_WIDGET
+        mediaPlayer.play(filePath.toStdString(), SDLApp::getWindowId(videoWidget->getSDLWindow()), true);
+#elif defined(USE_QT_MULTIMEDIA_WIDGET)
+        mediaPlayer.play(filePath.toStdString(), videoWidget, true);
         //qMediaPlayer->stop();
         //qMediaPlayer->setSource(QUrl::fromLocalFile(filePath));
         //qMediaPlayer->play();
@@ -562,7 +659,7 @@ void QtSDLFFmpegVideoPlayer::systemSetVolume(int value)
     double volume = getVolumeFromUIValue(value);
     systemVolumeController.setSystemMasterVolume(volume);
 #else
-#error "System volume control is only implemented for Windows. You can implement it for other platforms using their respective APIs."
+// #error "System volume control is only implemented for Windows. You can implement it for other platforms using their respective APIs."
 #endif
 }
 
@@ -572,7 +669,7 @@ void QtSDLFFmpegVideoPlayer::systemMixerSetVolume(int value)
     double volume = getVolumeFromUIValue(value);
     systemVolumeController.setSystemMixerVolume(volume);
 #else
-#error "System volume control is only implemented for Windows. You can implement it for other platforms using their respective APIs."
+// #error "System volume control is only implemented for Windows. You can implement it for other platforms using their respective APIs."
 #endif
 }
 

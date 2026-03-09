@@ -181,6 +181,9 @@
     <ClInclude Include="Utils\COMUtils.h">
       <Filter>Utils</Filter>
     </ClInclude>
+    <ClInclude Include="QtUIs\Win32TaskbarMediaController.h">
+      <Filter>QtUIs</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="QtUIs\QtSDLFFmpegVideoPlayer.h">

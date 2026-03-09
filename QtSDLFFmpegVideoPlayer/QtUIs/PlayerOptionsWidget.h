@@ -57,7 +57,7 @@ signals:
 
     // Audio options signals
     void equalizerEnableStateChange(bool enable);
-    void equalizerGainChange(size_t bandIndex, double gain);
+    void equalizerGainChange(uint64_t bandIndex, double gain);
     void equalizerGainsChange(const std::vector<double>& gains);
     void systemMixerVolumeChange(int volume);
     void systemVolumeChange(int volume);
@@ -86,7 +86,7 @@ protected slots:
     void videoOptionVideoChromaticityReset();
 
     void audioOptionEqualizerStateChange(Qt::CheckState state) { emit equalizerEnableStateChange(state == Qt::CheckState::Checked); }
-    void audioOptionEqualizerValueChange(size_t bandIndex, int value) { emit equalizerGainChange(bandIndex, value / 100.0); }
+    void audioOptionEqualizerValueChange(uint64_t bandIndex, int value) { emit equalizerGainChange(bandIndex, value / 100.0); }
     void audioOptionEqualizerValue1Change(int value) { audioOptionEqualizerValueChange(0, value); }
     void audioOptionEqualizerValue2Change(int value) { audioOptionEqualizerValueChange(1, value); }
     void audioOptionEqualizerValue3Change(int value) { audioOptionEqualizerValueChange(2, value); }

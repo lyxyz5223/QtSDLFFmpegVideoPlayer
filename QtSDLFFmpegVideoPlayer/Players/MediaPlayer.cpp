@@ -4,7 +4,7 @@ MediaPlayer::StreamTypes MediaPlayer::findStreams(AVFormatContext* formatCtx)
 {
     StreamTypes rst = StreamType::STNone;
     // 查找视频流和音频流
-    for (size_t i = 0; i < formatCtx->nb_streams; ++i)
+    for (uint64_t i = 0; i < formatCtx->nb_streams; ++i)
     {
         AVCodecParameters* codecPar = formatCtx->streams[i]->codecpar;
         switch (codecPar->codec_type)

@@ -160,7 +160,14 @@ bool AudioPlayer::openOutputAudioStream(int sampleRate, AVChannelLayout channelL
     // 删除已有的音频设备实例
     // audioDevice.reset();
     constexpr AudioAdapterFactory::AudioAdapterAdapter audioDeviceApiType = AudioAdapterFactory::RtAudioAdapter;
+#ifdef _WIN32
     constexpr AudioAdapter::AudioApi audioApiType = AudioAdapter::WindowsWasapi;
+    //constexpr AudioAdapter::AudioApi audioApiType = AudioAdapter::Unspecified;
+#elif defined(__linux__)
+    constexpr AudioAdapter::AudioApi audioApiType = AudioAdapter::Unspecified;
+#else
+    constexpr AudioAdapter::AudioApi audioApiType = AudioAdapter::Unspecified;
+#endif
     // 创建新的RtAudio实例
     playbackStateVariables.audioDevice.reset(AudioAdapterFactory::create(audioDeviceApiType, audioApiType));
     if (!playbackStateVariables.audioDevice)
@@ -259,7 +266,7 @@ bool AudioPlayer::openAndStartOutputAudioStream(int sampleRate, AVChannelLayout 
 //{
 //    std::vector<StreamIndexType> streamIndexesList;
 //    // 查找视频流和音频流
-//    for (size_t i = 0; i < playbackStateVariables.formatCtx->nb_streams; ++i)
+//    for (uint64_t i = 0; i < playbackStateVariables.formatCtx->nb_streams; ++i)
 //        if (playbackStateVariables.formatCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
 //            streamIndexesList.emplace_back(i);
 //    StreamIndexType si = -1;
@@ -352,7 +359,7 @@ void AudioPlayer::packet2AudioStreams()
     SwrContext* swr = nullptr;
     AudioStreamInfo audioStreamInfo;
     //std::vector<uint8_t> audioDataBuffer;
-    size_t bufferedAudioDataIdx = 0;
+    uint64_t bufferedAudioDataIdx = 0;
 
     SharedPtr<IFrameFilter> noneFilter = std::make_shared<FFmpegFrameNoneFilter>(filterGraphStreamType, formatCtx, codecCtx.get(), streamIndex);
     SharedPtr<IFFmpegFrameAudioEqualizerFilter> equalizerFilter = std::make_shared<FFmpegFrameAudio10BandEqualizerFilter>(filterGraphStreamType, formatCtx, codecCtx.get(), streamIndex);
@@ -380,7 +387,7 @@ void AudioPlayer::packet2AudioStreams()
         //std::unique_lock lockMtxStreamQueue(playbackStateVariables.mtxStreamQueue);
         //playbackStateVariables.streamQueue.emplace(std::move(vecAudioData), filteredFrame->pts, timeBaseRational, filteredFrame->pts * timeBase);
         };
-    auto audioDataEnqueueHandler = [&audioDataEnqueue, &audioStreamInfo, &bufferedAudioDataIdx, &convertedFrame, &timeBase, &timeBaseRational, &speedFilter] (uint8_t* audioData, size_t audioDataSize, AVFrame* curFrame) {
+    auto audioDataEnqueueHandler = [&audioDataEnqueue, &audioStreamInfo, &bufferedAudioDataIdx, &convertedFrame, &timeBase, &timeBaseRational, &speedFilter] (uint8_t* audioData, uint64_t audioDataSize, AVFrame* curFrame) {
         // 溢出的音频数据
         std::span<uint8_t> overflowAudioData{ audioData, audioDataSize };
         while (!overflowAudioData.empty())
@@ -390,11 +397,11 @@ void AudioPlayer::packet2AudioStreams()
                 continue;
             auto& audioDataBuffer = audioStreamInfo.dataBytes;
             if (audioDataBuffer.empty())
-                audioDataBuffer.resize(static_cast<size_t>(dataSize), 0);
+                audioDataBuffer.resize(static_cast<uint64_t>(dataSize), 0);
             audioStreamInfo.pts = static_cast<uint64_t>(curFrame->pts);
             audioStreamInfo.timeBase = timeBaseRational;
             audioStreamInfo.frameTime = (curFrame->pts) * timeBase;
-            size_t toCopyCount = audioDataBuffer.size() - bufferedAudioDataIdx; // buffer剩余空间大小
+            uint64_t toCopyCount = audioDataBuffer.size() - bufferedAudioDataIdx; // buffer剩余空间大小
             if (toCopyCount >= overflowAudioData.size())
                 toCopyCount = overflowAudioData.size();
             //else if (toCopyCount < overflowAudioData.size()) // 数据溢出
@@ -572,10 +579,10 @@ void AudioPlayer::packet2AudioStreams()
             }
             // 播放音频
             // 复制音频数据
-            audioDataEnqueueHandler(reinterpret_cast<uint8_t*>(convertedFrame->data[0]), static_cast<size_t>(ret) * filteredFrame->ch_layout.nb_channels * AUDIO_OUTPUT_FORMAT_BYTES_PER_SAMPLE, frame.get());
+            audioDataEnqueueHandler(reinterpret_cast<uint8_t*>(convertedFrame->data[0]), static_cast<uint64_t>(ret) * filteredFrame->ch_layout.nb_channels * AUDIO_OUTPUT_FORMAT_BYTES_PER_SAMPLE, frame.get());
             // 获取缓冲区内的残余数据
             while ((ret = swr_convert(swr, convertedFrame->data, convertedFrame->nb_samples, 0, 0)) > 0)
-                audioDataEnqueueHandler(reinterpret_cast<uint8_t*>(convertedFrame->data[0]), static_cast<size_t>(ret) * filteredFrame->ch_layout.nb_channels * AUDIO_OUTPUT_FORMAT_BYTES_PER_SAMPLE, frame.get());
+                audioDataEnqueueHandler(reinterpret_cast<uint8_t*>(convertedFrame->data[0]), static_cast<uint64_t>(ret) * filteredFrame->ch_layout.nb_channels * AUDIO_OUTPUT_FORMAT_BYTES_PER_SAMPLE, frame.get());
         }
     }
     swr_free(&swr);
@@ -602,7 +609,7 @@ void AudioPlayer::renderAudio()
 AudioAdapter::AudioCallbackResult AudioPlayer::renderAudioAsyncCallback(void*& outputBuffer, void*& inputBuffer, unsigned int& nFrames, double& streamTime, AudioAdapter::AudioStreamStatuses& status, AudioAdapter::RawArgsType& rawArgs, AudioAdapter::UserDataType& userData)
 {
     auto& numberOfChannels = playbackStateVariables.numberOfAudioOutputChannels;
-    std::span<AudioSampleFormatType> spanOutBuffer{ reinterpret_cast<AudioSampleFormatType*>(outputBuffer), static_cast<size_t>(numberOfChannels * nFrames) };
+    std::span<AudioSampleFormatType> spanOutBuffer{ reinterpret_cast<AudioSampleFormatType*>(outputBuffer), static_cast<uint64_t>(numberOfChannels * nFrames) };
     std::span<uint8_t> spanOutBuffer8Bits{ reinterpret_cast<uint8_t*>(outputBuffer), spanOutBuffer.size() * AUDIO_OUTPUT_FORMAT_BYTES_PER_SAMPLE };
     auto adjustVolume = [&spanOutBuffer, &nFrames, &numberOfChannels, &userData] (double vol) {
         // 简单音量调整：线性调节

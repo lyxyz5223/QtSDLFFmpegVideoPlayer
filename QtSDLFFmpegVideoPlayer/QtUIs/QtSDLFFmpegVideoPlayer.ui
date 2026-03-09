@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>859</width>
+    <width>940</width>
     <height>465</height>
    </rect>
   </property>
@@ -390,8 +390,8 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>859</width>
-     <height>21</height>
+     <width>940</width>
+     <height>27</height>
     </rect>
    </property>
    <widget class="QMenu" name="mainMenu">
@@ -493,12 +493,12 @@
   <customwidget>
    <class>RoundedIconButton</class>
    <extends>QPushButton</extends>
-   <header>roundediconbutton.h</header>
+   <header>RoundedIconButton.h</header>
   </customwidget>
   <customwidget>
    <class>PlayListWidget</class>
    <extends>QWidget</extends>
-   <header>playlistwidget.h</header>
+   <header>PlayListWidget.h</header>
    <container>1</container>
   </customwidget>
  </customwidgets>

@@ -1,9 +1,11 @@
 #pragma once
 #include <qlistview.h>
 #include <qicon.h>
-#include <QStyledItemDelegate.h>
+#include <QStyledItemDelegate>
 #include <QAbstractListModel>
 #include <QFileInfo>
+#include <cstdint>
+#include <QDataStream>
 
 struct PlayListItem
 {
@@ -11,7 +13,7 @@ struct PlayListItem
     QString title; // 标题
     QString artist; // 艺术家
     QString album; // 专辑
-    size_t duration{ 0 };
+    uint64_t duration{ 0 };
 private:
     QFileInfo fileInfo;
     QIcon icon;
@@ -48,15 +50,15 @@ public:
     }
     ~PlayListItem() {}
     explicit PlayListItem(PlayListItem&& other) noexcept
-        : fileInfo(std::move(other.fileInfo)),
-          icon(std::move(other.icon)),
-          playing(other.playing),
-          fontColor(std::move(other.fontColor)),
-          url(std::move(other.url)),
+        : url(std::move(other.url)),
           title(std::move(other.title)),
           artist(std::move(other.artist)),
           album(std::move(other.album)),
-          duration(std::move(other.duration))
+          duration(std::move(other.duration)),
+          fileInfo(std::move(other.fileInfo)),
+          icon(std::move(other.icon)),
+          playing(other.playing),
+          fontColor(std::move(other.fontColor))
     {
     }
     PlayListItem& operator=(const PlayListItem& other) {
@@ -84,7 +86,7 @@ inline QDataStream& operator<<(QDataStream& out, const PlayListItem& item) // �
     out << item.title;
     out << item.artist;
     out << item.album;
-    out << item.duration;
+    out << static_cast<unsigned long long>(item.duration);
     // 私有成员如下
     // icon成员不进行序列化
     out << item.playing;
@@ -97,7 +99,9 @@ inline QDataStream& operator>>(QDataStream& in, PlayListItem& item) // 反序列
     in >> item.title;
     in >> item.artist;
     in >> item.album;
-    in >> item.duration;
+    unsigned long long d = 0;
+    in >> d;
+    item.duration = static_cast<uint64_t>(d);
     // 私有成员如下
     item.fileInfo = QFileInfo(item.url); // 重新构造fileInfo
     item.updateIcon(); // 更新图标
@@ -229,7 +233,7 @@ private:
     bool externalFileDropMimeData(const QMimeData* data, const QString& format, Qt::DropAction action, int row, int column, const QModelIndex& parent);
 
     static bool sortComparator(const QString& a, const QString& b, Qt::SortOrder order);
-    static bool sortComparator(const size_t& a, const size_t& b, Qt::SortOrder order);
+    static bool sortComparator(const uint64_t& a, const uint64_t& b, Qt::SortOrder order);
     static bool sortComparatorRandom();
     void sortByRandom();
 };

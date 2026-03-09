@@ -542,7 +542,7 @@ bool PlayListItemListModel::sortComparator(const QString& a, const QString& b, Q
     }
 }
 
-bool PlayListItemListModel::sortComparator(const size_t& a, const size_t& b, Qt::SortOrder order)
+bool PlayListItemListModel::sortComparator(const uint64_t& a, const uint64_t& b, Qt::SortOrder order)
 {
     switch (order)
     {

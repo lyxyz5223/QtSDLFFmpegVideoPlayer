@@ -276,7 +276,7 @@
   <customwidget>
    <class>PlayListListView</class>
    <extends>QListView</extends>
-   <header>playlistlistview.h</header>
+   <header>PlayListListView.h</header>
    <slots>
     <signal>backgroundDoubleClicked()</signal>
    </slots>
