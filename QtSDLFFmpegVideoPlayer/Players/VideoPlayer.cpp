@@ -1,4 +1,5 @@
 #include "VideoPlayer.h"
+#include <FrameProcessor.h>
 
 bool VideoPlayer::prepareBeforePlayback()
 {
@@ -245,6 +246,7 @@ void VideoPlayer::packet2VideoFrames()
     }
 }
 
+
 // 视频渲染
 void VideoPlayer::renderVideo()
 {
@@ -252,15 +254,6 @@ void VideoPlayer::renderVideo()
     auto&& waitObj = threadStateManager.addThread(ThreadIdentifier::Renderer);
     ThreadStateManager::AutoRemovedThreadObj autoRemoveWaitObj{ threadStateManager, waitObj };
 
-    // 帧格式转换选项
-    //auto& switchFormat = playbackStateVariables.playOptions.frameSwitchOptions.format;
-    //auto& newSize = playbackStateVariables.playOptions.frameSwitchOptions.size;
-    //auto& enableFrameFormatSwitch = playbackStateVariables.playOptions.frameSwitchOptions.enabled;
-    auto& frameSwitchOptionsCallback = playbackStateVariables.playOptions.frameSwitchOptionsCallback;
-    auto& frameSwitchOptionsCallbackUserData = playbackStateVariables.playOptions.frameSwitchOptionsCallbackUserData;
-    auto& renderer = playbackStateVariables.playOptions.renderer;
-    auto& rendererUserData = playbackStateVariables.playOptions.rendererUserData;
-    auto& videoClockSyncFunction = playbackStateVariables.playOptions.clockSyncFunction;
 
     //auto& codecCtx = videoCodecCtx;
     double timeBase = av_q2d(playbackStateVariables.formatCtx->streams[playbackStateVariables.streamIndex]->time_base);
@@ -269,24 +262,16 @@ void VideoPlayer::renderVideo()
     AVRational frameRate = playbackStateVariables.formatCtx->streams[playbackStateVariables.streamIndex]->avg_frame_rate;
     if (frameRate.num > 0 && frameRate.den > 0)
         frameDuration = av_q2d(av_inv_q(frameRate)); // 每帧的秒数，用于备选：计算视频时钟
-    // 软件
-    UniquePtr<AVFrame> swFrame{ av_frame_alloc(), constDeleterAVFrame };
-    AVFrame* videoFrame = nullptr; // 用于存放解码后的视频帧，此帧不需要释放
-    UniquePtr<AVFrame> switchedFrame{ makeUniqueFrame() }; // 用于存放转换为新格式的视频帧
-    UniquePtr<uint8_t> bufferSwitchedFrame = { nullptr, [](uint8_t* p) { if (p) av_free(p); } };
-    UniquePtr<SwsContext> swSwsCtx{ nullptr, [](SwsContext* ctx) { if (ctx) sws_freeContext(ctx); } };
-    UniquePtr<SwsContext> hwSwsCtx{ nullptr, [](SwsContext* ctx) { if (ctx) sws_freeContext(ctx); } };
-    AVPixelFormat hwTransferDstPixFormat = AV_PIX_FMT_NONE; // 硬件解码后数据传输的目标格式，AV_PIX_FMT_NONE表示自动选择，后面将自动识别
-    //SizeI codecSize{
-    //    playbackStateVariables.codecCtx->width,
-    //    playbackStateVariables.codecCtx->height
-    //};
-    auto codecPixFmt = playbackStateVariables.codecCtx->pix_fmt;
-    // 上一次获取的视频帧转换选项
-    VideoFrameSwitchOptions prevSwitchOptions;
+    // 软硬件
+    SharedPtr<AVFrame> rawFrame{ makeSharedFrame(nullptr) };
 
-    // sws转换插值算法
-    SwsFlags swsFlags = SWS_BILINEAR;
+    //UniquePtr<AVFrame> rawFrame{ makeUniqueFrame(nullptr) };
+    //UniquePtr<AVFrame> switchedFrame{ makeUniqueFrame() }; // 用于存放转换为新格式的视频帧
+    //UniquePtr<uint8_t> bufferSwitchedFrame = { nullptr, [](uint8_t* p) { if (p) av_free(p); } };
+    //UniquePtr<SwsContext> swsCtx{ nullptr, [](SwsContext* ctx) { if (ctx) sws_freeContext(ctx); } };
+    AVPixelFormat hwFramePixFmt = AV_PIX_FMT_NONE; // 硬件解码后数据传输的目标格式（即硬件格式），AV_PIX_FMT_NONE表示自动选择，后面将自动识别
+    auto swFramePixFmt = playbackStateVariables.codecCtx->pix_fmt; // 软件解码的像素格式，默认为解码器输出的格式
+
 
     // IIR 滤波，用于平滑过渡视频与音频的时间差
     double avgDiff = 0.0;
@@ -294,20 +279,63 @@ void VideoPlayer::renderVideo()
     double videoClockInside = 0.0; // 用于videoClock时钟的计算
     int64_t realtimeClockStart = 0;
 
-    UniquePtr<AVFrame> rawFrame{ nullptr, constDeleterAVFrame };
-    // 帧上下文
-    FrameContext frameCtx;
-    frameCtx.formatCtx = playbackStateVariables.formatCtx;
-    frameCtx.codecCtx = playbackStateVariables.codecCtx.get();
-    frameCtx.streamIndex = playbackStateVariables.streamIndex;
+    SharedPtr<FrameProcessor> frameProcessor = std::make_shared<FrameProcessor>(logger);
 
+    // 帧格式转换选项
+    //auto& switchFormat = playbackStateVariables.playOptions.frameSwitchOptions.format;
+    //auto& newSize = playbackStateVariables.playOptions.frameSwitchOptions.size;
+    //auto& enableFrameFormatSwitch = playbackStateVariables.playOptions.frameSwitchOptions.enabled;
+    auto& renderer = playbackStateVariables.playOptions.renderer;
+    auto& rendererUserData = playbackStateVariables.playOptions.rendererUserData;
+    auto& videoClockSyncFunction = playbackStateVariables.playOptions.clockSyncFunction;
     
-    SharedPtr<IFrameFilter> noneFilter = std::make_shared<FFmpegFrameNoneFilter>(playbackStateVariables.filterGraphStreamType, playbackStateVariables.formatCtx, playbackStateVariables.codecCtx.get(), playbackStateVariables.streamIndex);
-    SharedPtr<IFFmpegFrameSpeedFilter> speedFilter = std::make_shared<FFmpegFrameVideoSpeedFilter>(playbackStateVariables.filterGraphStreamType, playbackStateVariables.formatCtx, playbackStateVariables.codecCtx.get(), playbackStateVariables.streamIndex, playbackStateVariables.speed);
-    UniquePtr<FFmpegFrameFilterGraph> filterGraph = std::make_unique<FFmpegFrameFilterGraph>(playbackStateVariables.filterGraphStreamType, playbackStateVariables.formatCtx, playbackStateVariables.codecCtx.get(), playbackStateVariables.streamIndex);
-    //filterGraph->addFilter(speedFilter);
+    auto& filterGraphStreamType = playbackStateVariables.filterGraphStreamType;
+    auto& formatCtx = playbackStateVariables.formatCtx;
+    auto& codecCtx = playbackStateVariables.codecCtx;
+    auto& streamIndex = playbackStateVariables.streamIndex;
+    
+    auto& frameFilterGraphCreator = playbackStateVariables.playOptions.frameFilterGraphCreator;
+    auto& frameFilterGraphCreatorUserData = playbackStateVariables.playOptions.frameFilterGraphCreatorUserData;
+
+    // 帧上下文
+    DecodedFrameContext frameCtx;
+    frameCtx.formatCtx = formatCtx;
+    frameCtx.codecCtx = codecCtx.get();
+    frameCtx.streamIndex = streamIndex;
+    frameCtx.hwDeviceType = playbackStateVariables.hwDeviceType;
+    frameCtx.hwPixelFormat = playbackStateVariables.hwPixelFormat;
+
+    //SharedPtr<IFrameFilter> noneFilter = std::make_shared<FFmpegFrameNoneFilter>(filterGraphStreamType, formatCtx, codecCtx.get(), streamIndex);
+    //UniquePtr<FFmpegFrameFilterGraph> filterGraph = std::make_unique<FFmpegFrameFilterGraph>(filterGraphStreamType, formatCtx, codecCtx.get(), streamIndex);
     //filterGraph->configureFilterGraph();
-    
+
+
+    // 返回false说明要么失败要么需要更多帧
+    auto getCustomFilterGraphsAndFilter = [&](AVFrame* srcFrame, SharedPtr<AVFrame>& filteredFrame) -> bool {
+        if (frameFilterGraphCreator)
+        {
+            DecodedFrameContext frameCtx{ formatCtx, codecCtx.get(), streamIndex, srcFrame };
+            std::vector<IFrameFilterGraph*> externalFilterGraphs;
+            bool useFilterGraph = frameFilterGraphCreator(externalFilterGraphs, frameCtx, frameFilterGraphCreatorUserData);
+            bool needMoreFrame = false;
+            if (useFilterGraph)
+            {
+                for (auto& fg : externalFilterGraphs)
+                {
+                    if (!fg || !fg->isValid())
+                        continue;
+                    filteredFrame = frameProcessor->filterFrame(srcFrame, fg, needMoreFrame);
+                    needMoreFrame = !filteredFrame; // 如果滤镜图没有输出，说明需要更多帧才能输出
+                    if (needMoreFrame)
+                        break; // 需要更多帧，停止当前帧的外部滤镜处理，继续解码下一帧
+                }
+            }
+            if (needMoreFrame)
+                return false;
+        }
+        return true;
+        };
+
     // 视频渲染循环
     while (true)
     {
@@ -333,47 +361,23 @@ void VideoPlayer::renderVideo()
                 waitObj.pause();
                 continue; // 队列为空，继续下一轮循环
             }
-            rawFrame.reset(frame); // 取出队列头部元素
+            rawFrame.reset(frame, constDeleterAVFrame); // 取出队列头部元素
         }
         logger.trace("Got video frame, current video frame queue size: {}", getQueueSize(playbackStateVariables.frameQueue));
         auto timeBeforeTimeSync = std::chrono::high_resolution_clock::now();
 
         // 视频帧处理
-        videoFrame = rawFrame.get(); // 先假定使用原始解码后的帧，后面可能会转换格式
         // 判断是否为硬件解码
         bool isHardwareDecoded = (rawFrame->format == playbackStateVariables.hwPixelFormat) && (playbackStateVariables.hwPixelFormat != AV_PIX_FMT_NONE);
-        //if (!isHardwareDecoded && playbackStateVariables.hwPixelFormat != AV_PIX_FMT_NONE)
-        //{
-        //    unsigned int threadCount = std::thread::hardware_concurrency();
-        //    if (threadCount > 16)
-        //        threadCount = 16;
-        //    playbackStateVariables.codecCtx->thread_count = threadCount;
-        //    playbackStateVariables.codecCtx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
-        //    std::vector<ThreadStateManager::ThreadStateController> objs;
-        //    bool demuxerPaused = false;
-        //    threadBlocker(logger, { ThreadIdentifier::Demuxer, ThreadIdentifier::Decoder }, playbackStateVariables.threadStateManager,
-        //        playbackStateVariables.demuxer, objs, demuxerPaused);
-        //    MediaDecodeUtils::findAndOpenVideoDecoder(&logger, playbackStateVariables.formatCtx, playbackStateVariables.streamIndex,
-        //        playbackStateVariables.codecCtx, false, MAX_VIDEO_HARDWARE_EXTRA_FRAME_SIZE,
-        //        &playbackStateVariables.hwDeviceType, &playbackStateVariables.hwPixelFormat);
-        //    playbackStateVariables.hwDeviceType = AV_HWDEVICE_TYPE_NONE;
-        //    playbackStateVariables.hwPixelFormat = AV_PIX_FMT_NONE;
-        //    // 清空队列
-        //    playbackStateVariables.clearPktAndFrameQueues();
-        //    // 刷新解码器buffer
-        //    avcodec_flush_buffers(playbackStateVariables.codecCtx.get());
-        //    threadAwakener(objs, playbackStateVariables.demuxer, demuxerPaused);
-        //    continue;
-        //}
-        // 先准备时钟同步
+        // 时钟记录开始时间，后续计算实时时钟使用
         if (!realtimeClockStart)
             realtimeClockStart = av_gettime();
         auto calcClock = [&] {
             playbackStateVariables.realtimeClock = (av_gettime() - realtimeClockStart) / 1000000.0;
             // 计算当前帧的时间戳
-            if (videoFrame->pts != AV_NOPTS_VALUE)
+            if (rawFrame->pts != AV_NOPTS_VALUE)
             {
-                videoClockInside = videoFrame->pts * timeBase;
+                videoClockInside = rawFrame->pts * timeBase;
                 playbackStateVariables.videoClock.store(videoClockInside);
             }
             else
@@ -384,13 +388,13 @@ void VideoPlayer::renderVideo()
                 playbackStateVariables.videoClock.store(videoClockInside);
             }
             };
-        auto rollbackClock = [&] {
-            // 根据时钟同步需要，需要回退到上一帧的时间
-            if (videoClockInside > frameDuration)
-                playbackStateVariables.videoClock.store(videoClockInside - frameDuration);
-            else
-                playbackStateVariables.videoClock.store(0);
-            };
+        //auto rollbackClock = [&] {
+        //    // 根据时钟同步需要，需要回退到上一帧的时间
+        //    if (videoClockInside > frameDuration)
+        //        playbackStateVariables.videoClock.store(videoClockInside - frameDuration);
+        //    else
+        //        playbackStateVariables.videoClock.store(0);
+        //    };
         calcClock(); // 更新时钟
         // Seek后进行操作需要注意特殊处理，想到两个方案
         // 方案一：立即更新时钟+帧时间回退到上一帧，实现稳定时钟
@@ -450,176 +454,40 @@ void VideoPlayer::renderVideo()
                 }
             }
         }
-        auto timeBeforeSwitch = std::chrono::high_resolution_clock::now();
+        auto timeBeforeFilter = std::chrono::high_resolution_clock::now();
 
-        // 处理解码后的视频帧
-        if (isHardwareDecoded) // 使用硬件解码
-        {
-            // 获取数据传输格式
-            if (hwTransferDstPixFormat == AV_PIX_FMT_NONE)
-            {
-                AVPixelFormat* dstFormats = nullptr;
-                if (av_hwframe_transfer_get_formats(rawFrame->hw_frames_ctx, AV_HWFRAME_TRANSFER_DIRECTION_FROM, &dstFormats, 0) < 0)
-                {
-                    logger.error("Error getting the data transfer format from GPU memory");
-                    //hwTransferDstPixFormat = AV_PIX_FMT_NV12; // 默认尝试使用NV12格式
-                    hwTransferDstPixFormat = AV_PIX_FMT_NONE; // 默认自动尝试
-                }
-                else
-                {
-                    hwTransferDstPixFormat = dstFormats[0];
-                    av_free(dstFormats);
-                }
-            }
-            swFrame->format = hwTransferDstPixFormat;
-            /* 将解码后的数据从GPU内存存格式转为CPU内存格式，并完成GPU到CPU内存的拷贝*/
-            if (av_hwframe_transfer_data(swFrame.get(), rawFrame.get(), 0) < 0)
-            {
-                logger.error("Error transferring the data from GPU memory to system memory");
-                continue; // 跳过当前帧，继续解码下一帧
-            }
-            // 复制属性信息
-            av_frame_copy_props(swFrame.get(), rawFrame.get());
-            videoFrame = swFrame.get();
-        }
-        else // 使用软件解码
-        {
-            // 此前已经设置过了，因此此处不需要再设置为rawFrame，故注释掉
-            //videoFrame = rawFrame.get();
-        }
+
         // 获取到软件帧（硬件帧->软件帧，或软件帧本身）后，使用滤波器处理得到最终帧
         SharedPtr<AVFrame> filteredFrame{ nullptr };
-        speedFilter->setSpeed(playbackStateVariables.speed);
-        if (filterGraph->isValid())
-        {
-            if (!filterGraph->addFrame(videoFrame, IFrameFilter::SrcFlagKeepReference))
-                logger.error("Error add frame to filter graph");
-            filteredFrame = filterGraph->getOutputFrame(nullptr, IFrameFilter::SinkFlagNone);
-            if (!filteredFrame)
-                continue; // filter失败
-        }
-        else
-            filteredFrame = noneFilter->filter(videoFrame);
+        bool shouldResetSwsContext = false; // 是否需要重置sws上下文，通常为选项发生变化时需要重置
+        // 允许外部添加滤镜图进行处理
+        if (!getCustomFilterGraphsAndFilter(rawFrame.get(), filteredFrame))
+            continue;
+
+        if (isHardwareDecoded && hwFramePixFmt == AV_PIX_FMT_NONE)
+            hwFramePixFmt = getHwFramePixelFormat(rawFrame->hw_frames_ctx);
+            //hwFramePixFmt = codecCtx->sw_pix_fmt;
 
         // 帧解析完成，更新帧上下文
-        frameCtx.hwRawFrame = isHardwareDecoded ? rawFrame.get() : nullptr;
-        frameCtx.swRawFrame = filteredFrame.get();
-        //frameCtx.newFormatFrame = nullptr; // 后面如果格式转换成功会更新
-        frameCtx.frameSwitchOptions = prevSwitchOptions;
+        frameCtx.rawFrame = rawFrame.get();
+        frameCtx.filteredFrame = filteredFrame.get();
         frameCtx.isHardwareDecoded = isHardwareDecoded;
-        frameCtx.hwFramePixelFormat = isHardwareDecoded ? playbackStateVariables.hwPixelFormat : AV_PIX_FMT_NONE;
-
-        // 调用回调获取帧格式转换选项
-        VideoFrameSwitchOptions switchOptions;
-        frameSwitchOptionsCallback(switchOptions, frameCtx, frameSwitchOptionsCallbackUserData);
-        // 转换后的大小：
-        //SizeI scaleSize = switchOptions.size.isValid() ? switchOptions.size : SizeI(codecSize.width(), codecSize.height());
-        SizeI scaleSize = switchOptions.size;
-        if (rawFrame->height) // 避免除以0
-        {
-            double aspectRatio = rawFrame->width / (double)rawFrame->height;
-            if (scaleSize.w < 0 && scaleSize.h >= 0) // 宽度自适应
-                scaleSize.w = static_cast<int>(scaleSize.h * aspectRatio);
-            else if (scaleSize.h < 0 && scaleSize.w >= 0) // 高度自适应
-                scaleSize.h = static_cast<int>(scaleSize.w / aspectRatio);
-            else if (!scaleSize.isValid()/*scaleSize.w < 0 && scaleSize.h < 0*/) // 使用原始大小
-                scaleSize = SizeI{ rawFrame->width, rawFrame->height };
-        }
-        else if (!scaleSize.isValid()) // 使用原始大小
-            scaleSize = SizeI(rawFrame->width, rawFrame->height);
-        bool switchEnabled = switchOptions.enabled; // 后续可能会修改（启用失败/无效选项时自动禁用）
-        // 如果转换选项发生变化，重新创建转换上下文和缓冲区
-        if (switchEnabled && prevSwitchOptions != switchOptions)
-        {
-            constexpr int alignSize = 64; // 帧buffer的对齐大小
-            // 获取新格式所需的缓冲区大小
-            int numBytes = av_image_get_buffer_size(switchOptions.format, scaleSize.width(), scaleSize.height(), alignSize);
-            if (numBytes < 0)
-            {
-                char errStrBuf[AV_ERROR_MAX_STRING_SIZE];
-                logger.error("Could not fill image arrays for switched frame: code: {}, message: {}", numBytes, av_make_error_string(errStrBuf, AV_ERROR_MAX_STRING_SIZE, numBytes));
-                switchEnabled = false;
-            }
-            else
-            {
-                // 分配缓冲区，并用智能指针管理，自动释放之前的缓冲区
-                bufferSwitchedFrame.reset(static_cast<uint8_t*>(av_malloc(numBytes)));
-                switchedFrame->format = switchOptions.format; // 设置新格式
-                // 转换为新格式的帧, switchedFrame->data将指向bufferSwitchedFrame所指向的内存
-                int rst = av_image_fill_arrays(switchedFrame->data, switchedFrame->linesize,
-                    bufferSwitchedFrame.get(), switchOptions.format,
-                    scaleSize.width(), scaleSize.height(), alignSize);
-                if (rst < 0)
-                {
-                    char errStrBuf[AV_ERROR_MAX_STRING_SIZE];
-                    logger.error("Could not fill image arrays for switched frame: code: {}, message: {}", rst, av_make_error_string(errStrBuf, AV_ERROR_MAX_STRING_SIZE, rst));
-                    switchEnabled = false;
-                }
-                else
-                {
-                    if (isHardwareDecoded)
-                        hwSwsCtx.reset(checkAndGetCorrectSwsContext({ filteredFrame->width, filteredFrame->height }, hwTransferDstPixFormat, scaleSize, switchOptions.format, swsFlags));
-                    else
-                    {
-                        // 创建图像转换上下文, srcWidth,srcHeight,srcFormat,dstWidth,dstHeight,dstFormat
-                        swSwsCtx.reset(checkAndGetCorrectSwsContext({ filteredFrame->width, filteredFrame->height }, codecPixFmt, scaleSize, switchOptions.format, swsFlags));
-                    }
-                }
-            }
-        }
-        prevSwitchOptions = switchOptions; // 更新上一次的选项
-        // 如果启用格式转换，则进行格式转换
-        if (switchEnabled)
-        {
-            SwsContext* swsCtx = nullptr;
-            if (isHardwareDecoded) // 使用硬件解码
-                swsCtx = hwSwsCtx.get();
-            else // 使用软件解码
-                swsCtx = swSwsCtx.get();
-            if (swsCtx)
-            {
-                // 转换像素格式
-                int outputSliceHeight = sws_scale(swsCtx, (const uint8_t* const*)filteredFrame->data, filteredFrame->linesize,
-                    0, filteredFrame->height, switchedFrame->data, switchedFrame->linesize);
-                // 复制属性信息
-                av_frame_copy_props(switchedFrame.get(), rawFrame.get());
-                //logger.trace("sws_scale: Output height: {}", outputSliceHeight);
-                switchedFrame->ch_layout = filteredFrame->ch_layout;
-                switchedFrame->width = scaleSize.width();
-                switchedFrame->height = scaleSize.height();
-                if (outputSliceHeight < 0)
-                {
-                    logger.error("Error converting the image from pixel format {} to {}", av_get_pix_fmt_name(static_cast<AVPixelFormat>(filteredFrame->format)), av_get_pix_fmt_name(switchOptions.format));
-                    switchEnabled = false; // 转换失败，禁用转换，渲染时frameCtx.newFormatFrame将为nullptr
-                }
-            }
-            else
-            {
-                logger.error("SwsContext is null, cannot convert the image from pixel format {} to {}", av_get_pix_fmt_name(static_cast<AVPixelFormat>(filteredFrame->format)), av_get_pix_fmt_name(switchOptions.format));
-                switchEnabled = false; // 转换失败，禁用转换，渲染时frameCtx.newFormatFrame将为nullptr
-            }
-        }
-
-        // 帧转换完成，更新帧上下文
-        frameCtx.newFormatFrame = switchEnabled ? switchedFrame.get() : nullptr;
-        frameCtx.frameSwitchOptions = switchOptions;
-
-        UniquePtr<AVFrame> autoUnrefRawFrame(rawFrame.get(), [](AVFrame* frame) { if (frame) av_frame_unref(frame); });
-        UniquePtr<AVFrame> autoUnrefSwFrame(swFrame.get(), [](AVFrame* frame) { if (frame) av_frame_unref(frame); });
+        frameCtx.hwFramePixelFormat = hwFramePixFmt;
 
         // 渲染视频帧
         auto timeBeforeRender = std::chrono::high_resolution_clock::now();
-        if (renderer)
-            renderer(frameCtx, rendererUserData);
-        auto timeAfterRender = std::chrono::high_resolution_clock::now();
-        auto getFrameTimeInterval = timeBeforeTimeSync - timeBeforeGetFrame;
-        auto timeSyncTimeInterval = timeBeforeSwitch - timeBeforeTimeSync;
-        auto switchTimeInterval = timeBeforeRender - timeBeforeSwitch;
-        auto renderTimeInterval = timeAfterRender - timeBeforeRender;
-        auto frameRenderFullTime = getFrameTimeInterval + timeSyncTimeInterval + switchTimeInterval + renderTimeInterval;
-        logger.trace("Current frame: full time: {}, get frame time: {}, time sync time: {}, switch time: {}, render time: {}", frameRenderFullTime.count(), getFrameTimeInterval.count(), timeSyncTimeInterval.count(), switchTimeInterval.count(), renderTimeInterval.count());
+        if (renderer) renderer(frameCtx, rendererUserData);
         VideoRenderEvent videoRenderEvent{ &frameCtx };
         event(&videoRenderEvent);
+        auto timeAfterRender = std::chrono::high_resolution_clock::now();
+        
+        // 统计处理时间，用于分析性能瓶颈
+        auto getFrameTimeInterval = timeBeforeTimeSync - timeBeforeGetFrame;
+        auto timeSyncTimeInterval = timeBeforeFilter - timeBeforeTimeSync;
+        auto switchTimeInterval = timeBeforeRender - timeBeforeFilter;
+        auto renderTimeInterval = timeAfterRender - timeBeforeRender;
+        auto frameRenderFullTime = getFrameTimeInterval + timeSyncTimeInterval + switchTimeInterval + renderTimeInterval;
+        logger.trace("Current frame: full time: {}, get frame time: {}, time sync time: {}, filter time: {}, render time: {}", frameRenderFullTime.count(), getFrameTimeInterval.count(), timeSyncTimeInterval.count(), switchTimeInterval.count(), renderTimeInterval.count());
     }
 }
 
@@ -697,6 +565,13 @@ void VideoPlayer::renderVideo()
     }
 */
 
+std::unordered_map<VideoPlayer::DeprecatedPixelFormat, VideoPlayer::SupportedPixelFormat, VideoPlayer::DeprecatedSupportedPixelFormatHashType> VideoPlayer::mapDeprecatedSupportedPixelFormat{
+    { DeprecatedPixelFormat::YUVJ420P, SupportedPixelFormat::YUV420P },
+    { DeprecatedPixelFormat::YUVJ422P, SupportedPixelFormat::YUV422P },
+    { DeprecatedPixelFormat::YUVJ444P, SupportedPixelFormat::YUV444P },
+    { DeprecatedPixelFormat::YUVJ440P, SupportedPixelFormat::YUV440P },
+};
+
 bool VideoPlayer::isDeprecatedPixelFormat(AVPixelFormat pixFmt)
 {
     if (mapDeprecatedSupportedPixelFormat.count(static_cast<DeprecatedPixelFormat>(pixFmt)))
@@ -715,7 +590,7 @@ AVPixelFormat VideoPlayer::getSupportedPixelFormat(AVPixelFormat pixFmt, bool& i
     return pixFmt;
 }
 
-SwsContext* VideoPlayer::checkAndGetCorrectSwsContext(SizeI srcSize, AVPixelFormat srcFmt, SizeI dstSize, AVPixelFormat dstFmt, SwsFlags flags)
+SwsContext* VideoPlayer::checkAndGetCorrectSwsContext(SizeI srcSize, AVPixelFormat srcFmt, SizeI dstSize, AVPixelFormat dstFmt, SwsFlags flags, Logger* logger)
 {
     auto* sws = sws_getContext(srcSize.width(), srcSize.height(), srcFmt, dstSize.width(), dstSize.height(), dstFmt, flags, nullptr, nullptr, nullptr);
     bool isDeprecated = false;
@@ -735,9 +610,90 @@ SwsContext* VideoPlayer::checkAndGetCorrectSwsContext(SizeI srcSize, AVPixelForm
         sws = sws_getContext(srcSize.width(), srcSize.height(), target, dstSize.width(), dstSize.height(), dstFmt, flags, nullptr, nullptr, nullptr);
         srcRange = 1; // 0-255
         sws_setColorspaceDetails(sws, invTable, srcRange, table, dstRange, b, c, s);
-        logger.info("Deprecated pixel format: {} to supported pixel format: {}", static_cast<std::underlying_type_t<AVPixelFormat>>(srcFmt), static_cast<std::underlying_type_t<AVPixelFormat>>(target));
+        if (logger) logger->info("Deprecated pixel format: {} to supported pixel format: {}", static_cast<std::underlying_type_t<AVPixelFormat>>(srcFmt), static_cast<std::underlying_type_t<AVPixelFormat>>(target));
     }
     return sws;
+}
+
+VideoPlayer::SharedPtr<SwsContext> VideoPlayer::createSwsContext(AVFrame* targetFrame, AVPixelFormat srcPixFmt, SizeI srcSize, Logger* logger)
+{
+    SharedPtr<SwsContext> swsCtx{ nullptr, [](SwsContext* p) { if (p) sws_freeContext(p); } };
+    constexpr int ALIGN_SIZE = 64; // 帧buffer的对齐大小
+    constexpr SwsFlags SWS_FLAGS = SWS_BILINEAR; // sws转换插值算法
+    int rst = av_frame_get_buffer(targetFrame, ALIGN_SIZE);
+    if (rst < 0) // 错误处理
+    {
+        char errStrBuf[AV_ERROR_MAX_STRING_SIZE];
+        if (logger) logger->error("Could not fill image arrays for switched frame: code: {}, message: {}", rst, av_make_error_string(errStrBuf, AV_ERROR_MAX_STRING_SIZE, rst));
+        return swsCtx;
+    }
+    // 创建图像转换上下文, srcSize,srcFormat,dstSize,dstFormat
+    swsCtx.reset(checkAndGetCorrectSwsContext(srcSize, srcPixFmt, { targetFrame->width, targetFrame->height }, static_cast<AVPixelFormat>(targetFrame->format), SWS_FLAGS),
+        [](SwsContext* p) { if (p) sws_freeContext(p); }
+    );
+    return swsCtx;
+}
+
+bool VideoPlayer::swsScaleFrame(SwsContext* swsCtx, AVFrame* srcFrame, AVFrame* targetFrame, Logger* logger)
+{
+    if (!swsCtx)
+    {
+        if (logger) logger->error("SwsContext is null, cannot convert the image from pixel format {} to {}", av_get_pix_fmt_name(static_cast<AVPixelFormat>(srcFrame->format)), av_get_pix_fmt_name(static_cast<AVPixelFormat>(targetFrame->format)));
+        return false;
+    }
+    int outputSliceHeight = sws_scale(swsCtx, (const uint8_t* const*)srcFrame->data, srcFrame->linesize, 0, srcFrame->height, targetFrame->data, targetFrame->linesize); // 转换像素格式
+    av_frame_copy_props(targetFrame, srcFrame); // 复制属性信息
+    if (outputSliceHeight >= 0)
+        return true;
+    if (logger) logger->error("Error converting the image from pixel format {} to {}", av_get_pix_fmt_name(static_cast<AVPixelFormat>(srcFrame->format)), av_get_pix_fmt_name(static_cast<AVPixelFormat>(targetFrame->format)));
+    return false;
+}
+
+VideoPlayer::SizeI VideoPlayer::getCorrectScaleSize(const SizeI& scaleSize, const SizeI& frameSize)
+{
+    SizeI rst;
+    if (frameSize.height()) // 避免除以0
+    {
+        double aspectRatio = frameSize.width() / (double)frameSize.height();
+        if (scaleSize.w < 0 && scaleSize.h >= 0) // 宽度自适应
+            rst.w = static_cast<int>(scaleSize.h * aspectRatio);
+        else if (scaleSize.h < 0 && scaleSize.w >= 0) // 高度自适应
+            rst.h = static_cast<int>(scaleSize.w / aspectRatio);
+        else if (!scaleSize.isValid()/*scaleSize.w < 0 && scaleSize.h < 0*/) // 使用原始大小
+            rst = frameSize;
+    }
+    else if (!scaleSize.isValid()) // 使用原始大小
+        rst = frameSize;
+    return rst;
+}
+AVPixelFormat VideoPlayer::getHwFramePixelFormat(AVBufferRef* hwFrameCtx)
+{
+    if (!hwFrameCtx) return AV_PIX_FMT_NONE;
+    AVPixelFormat* dstFormats = nullptr;
+    if (av_hwframe_transfer_get_formats(hwFrameCtx, AV_HWFRAME_TRANSFER_DIRECTION_FROM, &dstFormats, 0) < 0)
+    {
+        //hwTransferDstPixFormat = AV_PIX_FMT_NV12; // 默认尝试使用NV12格式
+        return AV_PIX_FMT_NONE;
+    }
+    if (!dstFormats)
+        return AV_PIX_FMT_NONE;
+    auto f = dstFormats[0];
+    av_free(dstFormats);
+    return f;
+}
+
+bool VideoPlayer::hwToSwFrame(AVFrame* dstFrame, AVFrame* srcFrame, AVPixelFormat hwPixFmt)
+{
+    // 获取数据传输格式
+    if (hwPixFmt == AV_PIX_FMT_NONE)
+        return false;
+    dstFrame->format = hwPixFmt;
+    /* 将解码后的数据从GPU内存存格式转为CPU内存格式，并完成GPU到CPU内存的拷贝*/
+    if (av_hwframe_transfer_data(dstFrame, srcFrame, 0) < 0)
+        return false;
+    // 复制属性信息
+    av_frame_copy_props(dstFrame, srcFrame);
+    return true;
 }
 
 void VideoPlayer::requestTaskHandlerSeek(MediaRequestHandleEvent* e, std::any userData)

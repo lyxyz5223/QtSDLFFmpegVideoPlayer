@@ -21,7 +21,7 @@ class Win32SystemVolumeController : public ISystemVolumeController
     public:
         AudioEndpointVolumeCallback(Win32SystemVolumeController& parent) : parent(parent) {}
         virtual HRESULT STDMETHODCALLTYPE OnNotify(PAUDIO_VOLUME_NOTIFICATION_DATA pNotify) {
-            parent.logger.info("Master volume changed, new volume: {}", pNotify->fMasterVolume);
+            parent.logger.trace("Master volume changed, new volume: {}", pNotify->fMasterVolume);
             pNotify->fMasterVolume;
             if (parent.volumeChangeCallback)
                 parent.volumeChangeCallback(Master, std::clamp(pNotify->fMasterVolume, 0.0f, 1.0f), pNotify->bMuted);

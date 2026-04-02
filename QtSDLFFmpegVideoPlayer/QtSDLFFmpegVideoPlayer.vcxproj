@@ -48,7 +48,7 @@
   </ImportGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="QtSettings">
     <QtInstall>6.7.2_msvc2019_64</QtInstall>
-    <QtModules>core;gui;widgets;multimediawidgets;svg</QtModules>
+    <QtModules>core;gui;widgets;multimedia;multimediawidgets;svg</QtModules>
     <QtBuildConfig>debug</QtBuildConfig>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Windows 7|x64'" Label="QtSettings">
@@ -80,7 +80,7 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
-    <IncludePath>.\Utils;.\Players;.\SDLUtils;.\QtUtils;.\Audio\AudioAdapter;.\Audio\VolumeController;.\Logger;$(IncludePath)</IncludePath>
+    <IncludePath>.\Utils;.\Players;.\SDLUtils;.\QtUtils;.\Audio\AudioAdapter;.\Audio\VolumeController;.\Logger;.\Tools;$(IncludePath)</IncludePath>
     <LibraryPath>$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Windows 7|x64'">
@@ -88,7 +88,7 @@
     <LibraryPath>$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
-    <IncludePath>.\Utils;.\Players;.\SDLUtils;.\QtUtils;.\Audio\AudioAdapter;.\Audio\VolumeController;$(IncludePath)</IncludePath>
+    <IncludePath>.\Utils;.\Players;.\SDLUtils;.\QtUtils;.\Audio\AudioAdapter;.\Audio\VolumeController;.\Tools;$(IncludePath)</IncludePath>
     <LibraryPath>$(LibraryPath)</LibraryPath>
     <CopyCppRuntimeToOutputDir>true</CopyCppRuntimeToOutputDir>
   </PropertyGroup>
@@ -119,7 +119,7 @@
     <ClCompile>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalIncludeDirectories>..\..\Libraries\ffmpeg-shared\include;..\..\Libraries\SDL3\include;..\..\Libraries\rtaudio-6.0.1;..\..\Libraries\portaudio-19.7.0\include;..\..\Libraries\Logger\include;..\..\Libraries\ConcurrentQueue;..\..\Libraries\opencv\build\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>HAVE_RTAUDIO;HAVE_PORTAUDIO;USE_STD_FORMAT;USE_QT_MULTIMEDIA_WIDGET;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>HAVE_RTAUDIO;HAVE_PORTAUDIO;USE_STD_FORMAT;NOTUSE_SDL_WIDGET;USE_QT_MULTIMEDIA_WIDGET;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
       <AdditionalLibraryDirectories>..\..\Libraries\ffmpeg-shared\lib;..\..\Libraries\SDL3\lib\x64;..\..\Libraries\rtaudio-6.0.1\build\Release;..\..\Libraries\portaudio-19.7.0\build\msvc\x64\Release;..\..\Libraries\Logger\build\Releasex64;..\..\Libraries\opencv\build\x64\vc16\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
@@ -218,6 +218,7 @@
     <ClInclude Include="resource.h" />
     <ClInclude Include="SDLUtils\SDLApp.h" />
     <ClInclude Include="SDLUtils\SDLMediaPlayer.h" />
+    <ClInclude Include="Tools\FrameProcessor.h" />
     <ClInclude Include="Utils\AtomicWaitObject.h" />
     <ClInclude Include="Utils\COMUtils.h" />
     <ClInclude Include="Utils\EnumDefine.h" />

@@ -29,19 +29,9 @@ public:
 
 
 public:
-    using AudioClockSyncFunction = std::function<bool(const AtomicDouble& audioClock, const AtomicBool& isClockStable, const double& audioRealtimeClock, int64_t& sleepTime)>;
+    typedef std::any UserDataType;
 
-    struct AudioPlayOptions {
-        StreamIndexSelector streamIndexSelector{ nullptr };
-        AudioClockSyncFunction clockSyncFunction{ nullptr }; // Reserved for future use
-
-        void mergeFrom(const AudioPlayOptions& other) {
-            if (other.streamIndexSelector) streamIndexSelector = other.streamIndexSelector;
-            if (other.clockSyncFunction) clockSyncFunction = other.clockSyncFunction;
-        }
-    };
-
-    struct FrameContext {
+    struct SampleFrameContext {
         AVFormatContext* formatCtx{ nullptr }; // 所属格式上下文
         AVCodecContext* codecCtx{ nullptr }; // 所属编解码上下文
         StreamIndexType streamIndex{ -1 }; // 所属流索引
@@ -58,12 +48,42 @@ public:
         bool isMute{ false }; // 静音
     };
 
+    struct DecodedFrameContext {
+        AVFormatContext* formatCtx{ nullptr }; // 所属格式上下文
+        AVCodecContext* codecCtx{ nullptr }; // 所属编解码上下文
+        StreamIndexType streamIndex{ -1 }; // 所属流索引
+
+        AVFrame* frame{ nullptr }; // 当前帧
+    };
+
+    using AudioClockSyncFunction = std::function<bool(const AtomicDouble& audioClock, const AtomicBool& isClockStable, const double& audioRealtimeClock, int64_t& sleepTime)>;
+
+    // @param outFilterGraphs 输出参数，返回要启用的滤波图列表
+    // @param frameContext 当前帧的上下文信息，包含了当前帧的各种信息以及上一帧的格式转换选项
+    // @param userData 用户数据
+    // 返回值true表示启用滤波图，false表示不启用
+    using AudioFrameFilterGraphCreator = std::function<bool(std::vector<IFrameFilterGraph*>& outFilterGraphs, bool& shouldResetSwrContext, const DecodedFrameContext& frameContext, UserDataType userData)>;
+
+    struct AudioPlayOptions {
+        StreamIndexSelector streamIndexSelector{ nullptr };
+        AudioClockSyncFunction clockSyncFunction{ nullptr }; // Reserved for future use
+        AudioFrameFilterGraphCreator frameFilterGraphCreator{ nullptr };
+        UserDataType frameFilterGraphCreatorUserData{ UserDataType{} };
+
+        void mergeFrom(const AudioPlayOptions& other) {
+            if (other.streamIndexSelector) streamIndexSelector = other.streamIndexSelector;
+            if (other.clockSyncFunction) clockSyncFunction = other.clockSyncFunction;
+            if (other.frameFilterGraphCreator) this->frameFilterGraphCreator = other.frameFilterGraphCreator;
+            if (other.frameFilterGraphCreatorUserData.has_value()) this->frameFilterGraphCreatorUserData = other.frameFilterGraphCreatorUserData;
+        }
+    };
+
     class AudioRenderEvent : public IMediaEvent {
-        FrameContext* frameCtx{ nullptr };
+        SampleFrameContext* frameCtx{ nullptr };
     public:
-        AudioRenderEvent(FrameContext* frameCtx)
+        AudioRenderEvent(SampleFrameContext* frameCtx)
             : IMediaEvent(MediaEventType::Render, StreamType::STAudio), frameCtx(frameCtx) {}
-        virtual FrameContext* frameContext() const {
+        virtual SampleFrameContext* frameContext() const {
             return frameCtx;
         }
         virtual UniquePtrD<IMediaEvent> clone() const override {
@@ -109,18 +129,17 @@ private:
         UniquePtr<AVCodecContext> codecCtx{ nullptr, constDeleterAVCodecContext };
         // 音频帧滤镜
         StreamType filterGraphStreamType{ STREAM_TYPES };
-        UniquePtrD<FFmpegFrameFilterGraph> frameFilterGraph{ nullptr };
 
         // 音量与静音
         AtomicDouble volume{ 1.0 }; // 范围0.0 ~ 1.0
         AtomicBool isMute{ false };
 
-        // 播放速率（倍速）
-        AtomicDouble speed{ 1.0 };
+        //// 播放速率（倍速）
+        //AtomicDouble speed{ 1.0 };
 
-        // 均衡器参数
-        std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo> equalizerBandGains{ FFmpegFrameAudio10BandEqualizerFilter::defaultBandGains() };
-        AtomicBool isEqualizerEnabled{ false };
+        //// 均衡器参数
+        //std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo> equalizerBandGains{ FFmpegFrameAudio10BandEqualizerFilter::defaultBandGains() };
+        //AtomicBool isEqualizerEnabled{ false };
 
         // 时钟
         AtomicDouble audioClock{ 0.0 }; // 单位s
@@ -150,8 +169,6 @@ private:
             streamIndex = -1;
             formatCtx = nullptr;
             codecCtx.reset();
-            if (frameFilterGraph)
-                frameFilterGraph->clearFilters();
             audioClock.store(0.0);
             realtimeClock = 0.0;
             // 清空请求任务队列
@@ -268,44 +285,43 @@ public:
         }
     }
 
-    void mute() { setMute(true); }
-    void unmute() { setMute(false); }
-    virtual void setMute(bool state) override {
-        playbackStateVariables.isMute.store(state);
-    }
-    virtual bool getMute() const override {
-        return playbackStateVariables.isMute;
-    }
-    virtual void setVolume(double volume) override {
-        playbackStateVariables.volume.store(volume);
-    }
-    virtual double getVolume() const override {
-        return playbackStateVariables.volume.load();
-    }
-    virtual void setSpeed(double speed) override {
-        playbackStateVariables.speed.store(speed);
-    }
-    virtual double getSpeed() const override {
-        return playbackStateVariables.speed.load();
-    }
-    virtual void setEqualizerState(bool enabled) {
-        playbackStateVariables.isEqualizerEnabled.store(enabled);
-    }
-    virtual bool getEqualizerState() const {
-        return playbackStateVariables.isEqualizerEnabled.load();
-    }
-
-    virtual void setEqualizerGains(const std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo>& gains) {
-        playbackStateVariables.equalizerBandGains = gains;
-    }
-    virtual void setEqualizerGain(uint64_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) {
-        if (bandIndex >= playbackStateVariables.equalizerBandGains.size())
-            return;
-        playbackStateVariables.equalizerBandGains[bandIndex] = gain;
-    }
-    virtual std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo> getEqualizerGains() const {
-        return playbackStateVariables.equalizerBandGains;
-    }
+    //void mute() { setMute(true); }
+    //void unmute() { setMute(false); }
+    //virtual void setMute(bool state) override {
+    //    playbackStateVariables.isMute.store(state);
+    //}
+    //virtual bool getMute() const override {
+    //    return playbackStateVariables.isMute;
+    //}
+    //virtual void setVolume(double volume) override {
+    //    playbackStateVariables.volume.store(volume);
+    //}
+    //virtual double getVolume() const override {
+    //    return playbackStateVariables.volume.load();
+    //}
+    //virtual void setSpeed(double speed) override {
+    //    playbackStateVariables.speed.store(speed);
+    //}
+    //virtual double getSpeed() const override {
+    //    return playbackStateVariables.speed.load();
+    //}
+    //virtual void setEqualizerState(bool enabled) {
+    //    playbackStateVariables.isEqualizerEnabled.store(enabled);
+    //}
+    //virtual bool getEqualizerState() const {
+    //    return playbackStateVariables.isEqualizerEnabled.load();
+    //}
+    //virtual void setEqualizerGains(const std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo>& gains) {
+    //    playbackStateVariables.equalizerBandGains = gains;
+    //}
+    //virtual void setEqualizerGain(uint64_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) {
+    //    if (bandIndex >= playbackStateVariables.equalizerBandGains.size())
+    //        return;
+    //    playbackStateVariables.equalizerBandGains[bandIndex] = gain;
+    //}
+    //virtual std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo> getEqualizerGains() const {
+    //    return playbackStateVariables.equalizerBandGains;
+    //}
 
     // \param streamIndex -1表示使用AV_TIME_BASE计算，否则使用streamIndex指定的流的time_base
     virtual void notifySeek(uint64_t pts, StreamIndexType streamIndex = -1) override {

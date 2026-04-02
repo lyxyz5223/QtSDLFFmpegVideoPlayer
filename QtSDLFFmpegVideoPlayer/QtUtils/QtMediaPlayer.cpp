@@ -2,6 +2,7 @@
 #include <QVideoSink>
 #include <QVideoFrame>
 
+
 std::optional<QVideoFrameFormat::PixelFormat> QtMultiMediaPlayer::avPixelFormatToQVideoFrameFormat(AVPixelFormat pixelFormat)
 {
     switch (pixelFormat)
@@ -556,13 +557,13 @@ std::optional<QVideoFrameFormat::PixelFormat> QtMultiMediaPlayer::avPixelFormatT
     return std::optional<QVideoFrameFormat::PixelFormat>();
 }
 
-QVideoFrame QtMultiMediaPlayer::createVideoFrameFromAVFrame(AVFrame* avFrame) {
+QtMultiMediaPlayer::SharedPtr<QVideoFrame> QtMultiMediaPlayer::createVideoFrameFromAVFrame(AVFrame* avFrame) {
     if (!avFrame || !avFrame->data[0])
-        return QVideoFrame();
+        return nullptr;
     // 将AVPixelFormat转换为QVideoFrameFormat::PixelFormat
     auto frameFormat = avPixelFormatToQVideoFrameFormat(static_cast<AVPixelFormat>(avFrame->format));
     if (!frameFormat.has_value())
-        return QVideoFrame();
+        return nullptr;
     
     QSize frameSize(avFrame->width, avFrame->height);
     QVideoFrameFormat format(frameSize, frameFormat.value());
@@ -572,19 +573,19 @@ QVideoFrame QtMultiMediaPlayer::createVideoFrameFromAVFrame(AVFrame* avFrame) {
     else if (avFrame->colorspace == AVCOL_SPC_BT470BG)
         format.setColorSpace(QVideoFrameFormat::ColorSpace_BT601);
 
-    QVideoFrame frame(format);
-    if (!frame.map(QVideoFrame::WriteOnly))
-        return QVideoFrame();
     int planes = av_pix_fmt_count_planes(static_cast<AVPixelFormat>(avFrame->format));
     if (planes < 0)
-        return QVideoFrame();
+        return nullptr;
+    SharedPtr<QVideoFrame> frame{ std::make_shared<QVideoFrame>(format) };
+    if (!frame->map(QVideoFrame::WriteOnly))
+        return nullptr;
     // 复制数据到QVideoFrame
     for (int i = 0; i < planes; ++i)
     {
         int planeHeight = (i == 0) ? avFrame->height : avFrame->height / 2;
-        uint8_t* dst = frame.bits(i);
+        uint8_t* dst = frame->bits(i);
         uint8_t* src = avFrame->data[i];
-        int dstStride = frame.bytesPerLine(i);
+        int dstStride = frame->bytesPerLine(i);
         int srcStride = avFrame->linesize[i];
 
         // 逐行复制
@@ -595,7 +596,7 @@ QVideoFrame QtMultiMediaPlayer::createVideoFrameFromAVFrame(AVFrame* avFrame) {
             src += srcStride;
         }
     }
-    frame.unmap();
+    frame->unmap();
     return frame;
 }
 
@@ -604,26 +605,25 @@ void QtMultiMediaPlayer::setupPlayer()
     
 }
 
-void QtMultiMediaPlayer::renderVideoFrame(const VideoFrameContext& frameCtx, VideoUserDataType userData)
+void QtMultiMediaPlayer::renderVideoFrame(const VideoDecodedFrameContext& frameCtx, VideoUserDataType userData)
 {
-    auto renderFrame = frameCtx.newFormatFrame;
-    if (!renderFrame) // 转换格式失败
-        return;
-    QVideoFrame frame{ createVideoFrameFromAVFrame(renderFrame) }; //QAbstractVideoBuffer;
-    currentWidget->videoSink()->setVideoFrame(frame);
+    auto rawFrame = frameCtx.filteredFrame;
+    if (!rawFrame) return;
+    VideoRenderUserData* ud = std::any_cast<VideoRenderUserData*>(userData);
+    if (!ud->processor)
+        ud->processor = std::make_shared<VideoFrameProcessor>(logger, brightness, contrast, saturation, hue);
+    if (!ud->processor) return;
+    auto fltdFrame = ud->processor->process(frameCtx);
+    if (!fltdFrame) return;
+    SharedPtr<QVideoFrame> frame = createVideoFrameFromAVFrame(fltdFrame.get()); //QAbstractVideoBuffer;
+    if (!frame) return;
+    currentWidget->videoSink()->setVideoFrame(*frame);
 }
 
 void QtMultiMediaPlayer::cleanupPlayer()
 {
     // 播放完毕，清空窗口内容
     currentWidget->videoSink()->setVideoFrame(QVideoFrame());
-}
-
-void QtMultiMediaPlayer::frameSwitchOptionsCallback(VideoFrameSwitchOptions& to, const VideoFrameContext& frameCtx, VideoUserDataType userData)
-{
-    to.enabled = true;
-    to.format = AV_PIX_FMT_YUV420P;
-    to.size = SizeI{};
 }
 
 
@@ -638,10 +638,107 @@ bool QtMultiMediaPlayer::play(const std::string& filePath, QVideoWidget* widget,
     setupPlayer();
     MediaPlayer::MediaPlayOptions mediaOptions;
     mediaOptions.renderer = std::bind(&QtMultiMediaPlayer::renderVideoFrame, this, std::placeholders::_1, std::placeholders::_2);
-    mediaOptions.rendererUserData = std::any{};
-    mediaOptions.frameSwitchOptionsCallback = std::bind(&QtMultiMediaPlayer::frameSwitchOptionsCallback, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
-    mediaOptions.frameSwitchOptionsCallbackUserData = std::any{};
+    VideoRenderUserData renderUserData;
+    mediaOptions.rendererUserData = &renderUserData;
     mediaOptions.decodeType = videoDecodeType;
+
+    UniquePtrD<FFmpegFrameFilterGraph> videoFilterGraph{ nullptr };
+    SharedPtr<FFmpegHwFrameVideoScaleCudaFilter> scaleCudaFilter{ nullptr };
+    mediaOptions.videoFrameFilterGraphCreator = [
+        &videoFilterGraph, &scaleCudaFilter
+    ](std::vector<IFrameFilterGraph*>& outFilterGraphs, const VideoDecodedFrameContext& frameContext, VideoUserDataType userData) -> bool {
+        if (!videoFilterGraph)
+        {
+            auto& streamIndex = frameContext.streamIndex;
+            auto& formatCtx = frameContext.formatCtx;
+            auto& codecCtx = frameContext.codecCtx;
+            videoFilterGraph = std::make_unique<FFmpegFrameFilterGraph>(StreamType::STVideo, formatCtx, codecCtx, streamIndex);
+            //scaleCudaFilter = std::make_shared<FFmpegHwFrameVideoScaleCudaFilter>(StreamType::STVideo, formatCtx, codecCtx, streamIndex, -1, -1, AV_PIX_FMT_NONE, "", true, FFmpegHwFrameVideoScaleCudaFilter::Disable);
+            //videoFilterGraph->addFilter(scaleCudaFilter);
+            videoFilterGraph->configureFilterGraph();
+        }
+        outFilterGraphs.push_back(videoFilterGraph.get());
+        return true;
+        };
+    mediaOptions.videoFrameFilterGraphCreatorUserData = VideoUserDataType{};
+
+    auto audioFilterGraph = UniquePtrD<FFmpegFrameFilterGraph>(nullptr);
+    auto equalizerFilter = SharedPtr<FFmpegFrameAudio10BandEqualizerFilter>(nullptr);
+    auto volumeFilter = SharedPtr<FFmpegFrameVolumeFilter>(nullptr);
+    auto speedFilter = SharedPtr<FFmpegFrameAudioSpeedFilter>(nullptr);
+    auto lastEqualizerEnabledState = false;
+    mediaOptions.audioFrameFilterGraphCreator = [
+        this, &audioFilterGraph, &equalizerFilter, &volumeFilter, &speedFilter, &lastEqualizerEnabledState
+    ](std::vector<IFrameFilterGraph*>& outFilterGraphs, bool& shouldResetSwrContext, const AudioDecodedFrameContext& frameContext, AudioUserDataType userData) -> bool {
+        if (!audioFilterGraph)
+        {
+            auto& streamIndex = frameContext.streamIndex;
+            auto& formatCtx = frameContext.formatCtx;
+            auto& codecCtx = frameContext.codecCtx;
+            audioFilterGraph = std::make_unique<FFmpegFrameFilterGraph>(StreamType::STAudio, formatCtx, codecCtx, streamIndex);
+            equalizerFilter = std::make_shared<FFmpegFrameAudio10BandEqualizerFilter>(StreamType::STAudio, formatCtx, codecCtx, streamIndex);
+            volumeFilter = std::make_shared<FFmpegFrameVolumeFilter>(StreamType::STAudio, formatCtx, codecCtx, streamIndex, volume);
+            speedFilter = std::make_shared<FFmpegFrameAudioSpeedFilter>(StreamType::STAudio, formatCtx, codecCtx, streamIndex, speed);
+            if (lastEqualizerEnabledState)
+                audioFilterGraph->addFilter(equalizerFilter);
+            audioFilterGraph->addFilter(volumeFilter);
+            if (speed != 1.0)
+                audioFilterGraph->addFilter(speedFilter); // 默认1倍速，不需要该滤镜，否则需要添加滤镜
+            audioFilterGraph->configureFilterGraph();
+        }
+        outFilterGraphs.push_back(audioFilterGraph.get());
+
+        double oldSpeed = speedFilter->speed();
+        speedFilter->setSpeed(speed);
+        volumeFilter->setVolume(volume);
+        equalizerFilter->setBandGains(equalizerBandGains);
+        Queue<std::function<void()>> postFilterGraphConfigTasks;
+        if (oldSpeed != speed && oldSpeed == 1.0)
+        {
+            // 从1x倍速改为变速
+            // 重建滤镜图
+            postFilterGraphConfigTasks.push([&] {
+                audioFilterGraph->addFilter(speedFilter);
+                });
+        }
+        else if (oldSpeed != speed && speed == 1.0)
+        {
+            // 1x取消倍速，防止音质受损
+            // 重建滤镜图
+            postFilterGraphConfigTasks.push([&] {
+                audioFilterGraph->removeFilter(speedFilter.get());
+                });
+        }
+        else if (oldSpeed > 2.0 && speed < 2.0)
+        {
+            // 重建滤镜图
+            postFilterGraphConfigTasks.push([&] {}); // 入队一个空的任务，后续判断postFilterGraphConfigTasks是否为空来决定是否重建滤镜图
+        }
+        if (lastEqualizerEnabledState != isEqualizerEnabled)
+        {
+            lastEqualizerEnabledState = isEqualizerEnabled;
+            // 重建滤镜图
+            postFilterGraphConfigTasks.push([&] {
+                if (isEqualizerEnabled)
+                    audioFilterGraph->addFilter(equalizerFilter);
+                else
+                    audioFilterGraph->removeFilter(equalizerFilter.get());
+                });
+        }
+        if (!postFilterGraphConfigTasks.empty())
+        {
+            audioFilterGraph->resetFilterGraph();
+            while (!postFilterGraphConfigTasks.empty())
+            {
+                auto& task = postFilterGraphConfigTasks.front();
+                task();
+                postFilterGraphConfigTasks.pop();
+            }
+            audioFilterGraph->configureFilterGraph();
+        }
+        return true;
+        };
+    mediaOptions.audioFrameFilterGraphCreatorUserData = AudioUserDataType{};
     bool r = MediaPlayer::play(filePath, mediaOptions);
     return r;
 }

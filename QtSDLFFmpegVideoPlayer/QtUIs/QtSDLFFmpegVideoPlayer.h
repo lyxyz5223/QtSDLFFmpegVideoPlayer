@@ -344,8 +344,8 @@ private:
     // 渲染第一帧的时候调用
     void beforePlaybackCallback(AbstractPlayer::StreamType streamType, const AVFormatContext* formatCtx, const AVCodecContext* videoCodecCtx, AbstractPlayer::StreamIndexType streamIndex);
     // 每一帧渲染时调用
-    void videoRenderCallback(const MediaPlayer::VideoFrameContext& frameCtx);
-    void audioRenderCallback(const MediaPlayer::AudioFrameContext& frameCtx);
+    void videoRenderCallback(const MediaPlayer::VideoDecodedFrameContext& frameCtx);
+    void audioRenderCallback(const MediaPlayer::AudioSampleFrameContext& frameCtx);
     // 播放停止后（无论什么原因）调用
     void afterPlaybackCallback();
 
@@ -370,32 +370,32 @@ private:
     void playerStepForward(uint64_t milliseconds);
 
     void playerSetEqualizerState(bool enabled) {
-        mediaPlayer.setEqualizerState(enabled);
+        mediaPlayer.setEqualizerEnabled(enabled);
     }
     void playerSetEqualizerGain(uint64_t bandIndex, double gain) {
         mediaPlayer.setEqualizerGain(bandIndex, { mediaPlayerAudioEqualizerDefaultGains[bandIndex].frequency, gain });
     }
-    void playerSetEqualizerGains(const std::vector<double>& gains) {
-        std::vector<AbstractPlayer::IFFmpegFrameAudioEqualizerFilter::BandInfo> newGains = mediaPlayer.getEqualizerGains();
-        for (uint64_t i = 0; i < gains.size(); ++i)
-            newGains[i].gain = gains[i];
-        mediaPlayer.setEqualizerGains(newGains);
+    //void playerSetEqualizerGains(const std::vector<double>& gains) {
+    //    std::vector<AbstractPlayer::IFFmpegFrameAudioEqualizerFilter::BandInfo> newGains = mediaPlayer.getEqualizerGains();
+    //    for (uint64_t i = 0; i < gains.size(); ++i)
+    //        newGains[i].gain = gains[i];
+    //    mediaPlayer.setEqualizerGains(newGains);
+    //}
+
+    void playerSetBrightness(float value) {
+        mediaPlayer.setBrightness(value);
     }
 
-    void playerSetBrightness(int value) {
-        //mediaPlayer.setBrightness(value);
+    void playerSetContrast(float value) {
+        mediaPlayer.setContrast(value);
     }
 
-    void playerSetContrast(int value) {
-        //mediaPlayer.setContrast(value);
+    void playerSetSaturation(float value) {
+        mediaPlayer.setSaturation(value);
     }
 
-    void playerSetSaturation(int value) {
-        //mediaPlayer.setSaturation(value);
-    }
-
-    void playerSetChromaticity(int value) {
-        //mediaPlayer.setChromaticity(value);
+    void playerSetHue(float value) {
+        mediaPlayer.setHue(value);
     }
 
     void systemSetVolume(int value);

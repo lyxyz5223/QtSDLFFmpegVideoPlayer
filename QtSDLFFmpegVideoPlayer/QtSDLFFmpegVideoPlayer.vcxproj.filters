@@ -51,6 +51,9 @@
     <Filter Include="Logger">
       <UniqueIdentifier>{79995ab2-7236-4268-919b-28dab4d51b33}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Tools">
+      <UniqueIdentifier>{e0008ceb-bf9b-4bf6-8463-8b980e7d9ae9}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -183,6 +186,9 @@
     </ClInclude>
     <ClInclude Include="QtUIs\Win32TaskbarMediaController.h">
       <Filter>QtUIs</Filter>
+    </ClInclude>
+    <ClInclude Include="Tools\FrameProcessor.h">
+      <Filter>Tools</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

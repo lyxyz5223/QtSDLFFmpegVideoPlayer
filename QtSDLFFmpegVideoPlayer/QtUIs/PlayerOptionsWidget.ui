@@ -35,7 +35,7 @@
    <item row="0" column="0">
     <widget class="QTabWidget" name="tabWidgetPlayOptions">
      <property name="currentIndex">
-      <number>2</number>
+      <number>1</number>
      </property>
      <property name="documentMode">
       <bool>true</bool>
@@ -465,13 +465,25 @@
        </item>
        <item row="0" column="2">
         <widget class="QSlider" name="horizontalSliderVideoBrightness">
+         <property name="minimum">
+          <number>-1000</number>
+         </property>
+         <property name="maximum">
+          <number>1000</number>
+         </property>
+         <property name="singleStep">
+          <number>10</number>
+         </property>
+         <property name="pageStep">
+          <number>200</number>
+         </property>
          <property name="orientation">
           <enum>Qt::Orientation::Horizontal</enum>
          </property>
         </widget>
        </item>
        <item row="3" column="3">
-        <widget class="QPushButton" name="btnResetVideoChromaticity">
+        <widget class="QPushButton" name="btnResetVideoHue">
          <property name="text">
           <string>重置</string>
          </property>
@@ -498,6 +510,21 @@
        </item>
        <item row="2" column="2">
         <widget class="QSlider" name="horizontalSliderVideoSaturation">
+         <property name="minimum">
+          <number>-1000</number>
+         </property>
+         <property name="maximum">
+          <number>1000</number>
+         </property>
+         <property name="singleStep">
+          <number>10</number>
+         </property>
+         <property name="pageStep">
+          <number>200</number>
+         </property>
+         <property name="value">
+          <number>100</number>
+         </property>
          <property name="orientation">
           <enum>Qt::Orientation::Horizontal</enum>
          </property>
@@ -517,7 +544,19 @@
         </widget>
        </item>
        <item row="3" column="2">
-        <widget class="QSlider" name="horizontalSliderVideoChromaticity">
+        <widget class="QSlider" name="horizontalSliderVideoHue">
+         <property name="minimum">
+          <number>-18000</number>
+         </property>
+         <property name="maximum">
+          <number>18000</number>
+         </property>
+         <property name="singleStep">
+          <number>100</number>
+         </property>
+         <property name="pageStep">
+          <number>450</number>
+         </property>
          <property name="orientation">
           <enum>Qt::Orientation::Horizontal</enum>
          </property>
@@ -532,7 +571,7 @@
           </sizepolicy>
          </property>
          <property name="text">
-          <string>色彩度</string>
+          <string>色相</string>
          </property>
         </widget>
        </item>
@@ -593,6 +632,21 @@
        </item>
        <item row="1" column="2">
         <widget class="QSlider" name="horizontalSliderVideoContrast">
+         <property name="minimum">
+          <number>-1000</number>
+         </property>
+         <property name="maximum">
+          <number>1000</number>
+         </property>
+         <property name="singleStep">
+          <number>10</number>
+         </property>
+         <property name="pageStep">
+          <number>200</number>
+         </property>
+         <property name="value">
+          <number>100</number>
+         </property>
          <property name="orientation">
           <enum>Qt::Orientation::Horizontal</enum>
          </property>
@@ -885,7 +939,7 @@
                  <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>100</number>
+                 <number>200</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -910,7 +964,7 @@
                  <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>100</number>
+                 <number>200</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -935,7 +989,7 @@
                  <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>100</number>
+                 <number>200</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -960,7 +1014,7 @@
                  <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>100</number>
+                 <number>200</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -985,7 +1039,7 @@
                  <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>100</number>
+                 <number>200</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -1010,7 +1064,7 @@
                  <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>100</number>
+                 <number>200</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -1035,7 +1089,7 @@
                  <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>100</number>
+                 <number>200</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -1060,7 +1114,7 @@
                  <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>100</number>
+                 <number>200</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -1085,7 +1139,7 @@
                  <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>100</number>
+                 <number>200</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -1110,7 +1164,7 @@
                  <number>100</number>
                 </property>
                 <property name="pageStep">
-                 <number>100</number>
+                 <number>200</number>
                 </property>
                 <property name="orientation">
                  <enum>Qt::Orientation::Vertical</enum>
@@ -1681,10 +1735,10 @@
    </hints>
   </connection>
   <connection>
-   <sender>horizontalSliderVideoChromaticity</sender>
+   <sender>horizontalSliderVideoHue</sender>
    <signal>valueChanged(int)</signal>
    <receiver>PlayerOptionsClass</receiver>
-   <slot>videoOptionVideoChromaticityChange(int)</slot>
+   <slot>videoOptionVideoHueChange(int)</slot>
    <hints>
     <hint type="sourcelabel">
      <x>180</x>
@@ -1777,10 +1831,10 @@
    </hints>
   </connection>
   <connection>
-   <sender>btnResetVideoChromaticity</sender>
+   <sender>btnResetVideoHue</sender>
    <signal>clicked()</signal>
    <receiver>PlayerOptionsClass</receiver>
-   <slot>videoOptionVideoChromaticityReset()</slot>
+   <slot>videoOptionVideoHueReset()</slot>
    <hints>
     <hint type="sourcelabel">
      <x>304</x>
@@ -1836,11 +1890,11 @@
   <slot>playOptionPlayerABLoopIntervalSideBSet()</slot>
   <slot>playOptionPlayerABLoopIntervalRemove()</slot>
   <slot>videoOptionVideoBrightnessChange(int)</slot>
-  <slot>videoOptionVideoChromaticityChange(int)</slot>
+  <slot>videoOptionVideoHueChange(int)</slot>
   <slot>videoOptionVideoContrastChange(int)</slot>
   <slot>videoOptionVideoSaturationChange(int)</slot>
   <slot>videoOptionVideoBrightnessReset()</slot>
-  <slot>videoOptionVideoChromaticityReset()</slot>
+  <slot>videoOptionVideoHueReset()</slot>
   <slot>videoOptionVideoContrastReset()</slot>
   <slot>videoOptionVideoSaturationReset()</slot>
   <slot>slot9()</slot>

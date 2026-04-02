@@ -22,23 +22,27 @@ public:
     using AudioPlayOptions = AudioPlayer::AudioPlayOptions;
     using VideoRenderFunction = VideoPlayer::VideoRenderFunction;
     using VideoUserDataType = VideoPlayer::UserDataType;
-    using VideoFrameSwitchOptions = VideoPlayer::VideoFrameSwitchOptions;
-    using VideoFrameContext = VideoPlayer::FrameContext;
-    using AudioFrameContext = AudioPlayer::FrameContext;
-    using VideoFrameSwitchOptionsCallback = VideoPlayer::VideoFrameSwitchOptionsCallback;
+    using AudioUserDataType = AudioPlayer::UserDataType;
+    using VideoDecodedFrameContext = VideoPlayer::DecodedFrameContext;
+    using AudioDecodedFrameContext = AudioPlayer::DecodedFrameContext;
+    using AudioSampleFrameContext = AudioPlayer::SampleFrameContext;
     using VideoClockSyncFunction = VideoPlayer::VideoClockSyncFunction;
     using AudioClockSyncFunction = AudioPlayer::AudioClockSyncFunction;
     using MediaStreamIndexSelector = std::function<bool(StreamIndexType& videoStreamIndex, StreamIndexType& audioStreamIndex, const std::unordered_multimap<StreamType, StreamIndexType>& multimapStreamIndexes, const AVFormatContext* fmtCtx, const AVCodecContext* codecCtx)>;
     using VideoRenderEvent = VideoPlayer::VideoRenderEvent;
     using AudioRenderEvent = AudioPlayer::AudioRenderEvent;
     using VideoDecodeType = VideoPlayer::DecodeType;
+    using VideoFrameFilterGraphCreator = VideoPlayer::VideoFrameFilterGraphCreator;
+    using AudioFrameFilterGraphCreator = AudioPlayer::AudioFrameFilterGraphCreator;
 
     struct MediaPlayOptions {
+        VideoDecodeType decodeType{ VideoDecodeType::Unset/*默认,不设置*/ }; // Video
         VideoRenderFunction renderer{ nullptr }; // Video
         VideoUserDataType rendererUserData{ VideoUserDataType{} }; // Video
-        VideoFrameSwitchOptionsCallback frameSwitchOptionsCallback{ nullptr }; // Video
-        VideoUserDataType frameSwitchOptionsCallbackUserData{ VideoUserDataType{} }; // Video
-        VideoDecodeType decodeType{ VideoDecodeType::Unset/*默认,不设置*/ }; // Video
+        VideoFrameFilterGraphCreator videoFrameFilterGraphCreator{ nullptr };
+        VideoUserDataType videoFrameFilterGraphCreatorUserData{ VideoUserDataType{} };
+        AudioFrameFilterGraphCreator audioFrameFilterGraphCreator{ nullptr };
+        AudioUserDataType audioFrameFilterGraphCreatorUserData{ AudioUserDataType{} };
     };
 
     class MediaVideoPlayer : public VideoPlayer {
@@ -300,13 +304,15 @@ private:
             videoClockSyncFunction,
             options.renderer,
             options.rendererUserData,
-            options.frameSwitchOptionsCallback,
-            options.frameSwitchOptionsCallbackUserData,
-            options.decodeType
+            options.decodeType,
+            options.videoFrameFilterGraphCreator,
+            options.videoFrameFilterGraphCreatorUserData
         };
         AudioPlayOptions audioOptions{
             streamIndexSelector,
-            audioClockSyncFunction
+            audioClockSyncFunction,
+            options.audioFrameFilterGraphCreator,
+            options.audioFrameFilterGraphCreatorUserData
         };
         bool ar = true;
         bool vr = true;
@@ -423,51 +429,51 @@ public:
     }
 
 
-    void mute() { setMute(true); }
-    void unmute() { setMute(false); }
-    virtual void setMute(bool state) override {
-        return audioPlayer->setMute(state);
-    }
-    // 视频播放器不支持音频播放，因此只需要考虑音频播放器的静音状态
-    virtual bool getMute() const override {
-        return audioPlayer->getMute();
-    }
-    virtual void setVolume(double volume) override {
-        return audioPlayer->setVolume(volume);
-    }
-    // 视频播放器不支持音频播放，因此只需要考虑音频播放器的音量
-    virtual double getVolume() const override {
-        return audioPlayer->getVolume();
-    }
-    virtual void setSpeed(double speed) override {
-        execPlayerWithThreads({ [&] { videoPlayer->setSpeed(speed); }, [&] { audioPlayer->setSpeed(speed); } }, true);
-    }
-    virtual double getSpeed() const override {
-        double vs = videoPlayer->getSpeed();
-        double as = audioPlayer->getSpeed();
-        if (vs == as)
-            return as;
-        if (avSyncMode == AVSyncMode::VideoSyncToAudio)
-            return as;
-        else if (avSyncMode == AVSyncMode::AudioSyncToVideo)
-            return vs;
-        return 1.0; // 与系统时钟同步的速度为1.0
-    }
-    virtual void setEqualizerState(bool enabled) {
-        audioPlayer->setEqualizerState(enabled);
-    }
-    virtual bool getEqualizerState() const {
-        return audioPlayer->getEqualizerState();
-    }
-    virtual void setEqualizerGains(const std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo>& gains) {
-        audioPlayer->setEqualizerGains(gains);
-    }
-    virtual void setEqualizerGain(uint64_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) {
-        audioPlayer->setEqualizerGain(bandIndex, gain);
-    }
-    virtual std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo> getEqualizerGains() const {
-        return audioPlayer->getEqualizerGains();
-    }
+    //void mute() { setMute(true); }
+    //void unmute() { setMute(false); }
+    //virtual void setMute(bool state) override {
+    //    return audioPlayer->setMute(state);
+    //}
+    //// 视频播放器不支持音频播放，因此只需要考虑音频播放器的静音状态
+    //virtual bool getMute() const override {
+    //    return audioPlayer->getMute();
+    //}
+    //virtual void setVolume(double volume) override {
+    //    return audioPlayer->setVolume(volume);
+    //}
+    //// 视频播放器不支持音频播放，因此只需要考虑音频播放器的音量
+    //virtual double getVolume() const override {
+    //    return audioPlayer->getVolume();
+    //}
+    //virtual void setSpeed(double speed) override {
+    //    execPlayerWithThreads({ [&] { videoPlayer->setSpeed(speed); }, [&] { audioPlayer->setSpeed(speed); } }, true);
+    //}
+    //virtual double getSpeed() const override {
+    //    double vs = videoPlayer->getSpeed();
+    //    double as = audioPlayer->getSpeed();
+    //    if (vs == as)
+    //        return as;
+    //    if (avSyncMode == AVSyncMode::VideoSyncToAudio)
+    //        return as;
+    //    else if (avSyncMode == AVSyncMode::AudioSyncToVideo)
+    //        return vs;
+    //    return 1.0; // 与系统时钟同步的速度为1.0
+    //}
+    //virtual void setEqualizerState(bool enabled) override {
+    //    audioPlayer->setEqualizerState(enabled);
+    //}
+    //virtual bool getEqualizerState() const override {
+    //    return audioPlayer->getEqualizerState();
+    //}
+    //virtual void setEqualizerGains(const std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo>& gains) override {
+    //    audioPlayer->setEqualizerGains(gains);
+    //}
+    //virtual void setEqualizerGain(uint64_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) override {
+    //    audioPlayer->setEqualizerGain(bandIndex, gain);
+    //}
+    //virtual std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo> getEqualizerGains() const override {
+    //    return audioPlayer->getEqualizerGains();
+    //}
 
     // 跳转到指定pts位置，非精确跳转，使用AVSEEK_FLAG_BACKWARD标志从pts向前(回退)查找最近的关键帧
     // \param pts 跳转的时间戳，单位为streamIndex对应的time_base，若streamIndex为-1，则单位为1/AV_TIME_BASE
@@ -559,10 +565,6 @@ public:
         this->videoPlayer->setRenderer(renderer, userData);
     }
 
-    void setFrameSwitchOptionsCallback(VideoFrameSwitchOptionsCallback callback, VideoUserDataType userData) {
-        this->videoPlayer->setFrameSwitchOptionsCallback(callback, userData);
-    }
-
     void enableHardwareDecoding(bool enabled) {
         this->videoPlayer->enableHardwareDecoding(enabled);
     }
@@ -599,7 +601,7 @@ protected:
     // 视频渲染事件
     virtual void videoRenderEvent(VideoRenderEvent* e) {
         auto ctx = e->frameContext();
-        logger.trace("Video render event: pts={}, width={}, height={}", ctx->swRawFrame->pts, ctx->swRawFrame->width, ctx->swRawFrame->height);
+        logger.trace("Video render event: pts={}, width={}, height={}", ctx->rawFrame->pts, ctx->rawFrame->width, ctx->rawFrame->height);
     }
 
     virtual void audioRenderEvent(AudioRenderEvent* e) {

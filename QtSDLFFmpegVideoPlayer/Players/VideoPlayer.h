@@ -20,38 +20,32 @@ public:
 public:// 这个区域用于定义公共类型
     typedef std::any UserDataType;
     
-    struct VideoFrameSwitchOptions {
-        bool enabled{ false };
-        AVPixelFormat format{ AV_PIX_FMT_NONE };
-        SizeI size;
-        bool operator==(const VideoFrameSwitchOptions& other) const {
-            return enabled == other.enabled
-                && format == other.format
-                && size == other.size;
-        }
-        bool operator!=(const VideoFrameSwitchOptions& other) const {
-            return !(*this == other);
-        }
-    };
-    struct FrameContext {
+    struct DecodedFrameContext {
         // 总基本信息
 
         AVFormatContext* formatCtx{ nullptr };
         AVCodecContext* codecCtx{ nullptr };
         StreamIndexType streamIndex{ -1 };
         // 每一帧的信息
+        //AVFrame* hwRawFrame{ nullptr }; // 硬件解码帧，可能为nullptr
+        //AVFrame* swRawFrame{ nullptr }; // 软件解码帧，可能是从硬件帧转换来的（isHardwareDecoded为true），也可能是直接软件解码得到的
+        //AVFrame* newFormatFrame{ nullptr }; // 转换格式后的帧（如果转换启用），否则为nullptr，也可用于判断是否转换成功
 
-        AVFrame* hwRawFrame{ nullptr }; // 硬件解码帧，可能为nullptr
-        AVFrame* swRawFrame{ nullptr }; // 软件解码帧，可能是从硬件帧转换来的（isHardwareDecoded为true），也可能是直接软件解码得到的
-        AVFrame* newFormatFrame{ nullptr }; // 转换格式后的帧（如果转换启用），否则为nullptr，也可用于判断是否转换成功
-        VideoFrameSwitchOptions frameSwitchOptions;
+        AVFrame* rawFrame{ nullptr };
+        AVFrame* filteredFrame{ nullptr }; // 经过滤镜图后的帧
         bool isHardwareDecoded{ false }; // 是否为硬件解码
-        AVPixelFormat hwFramePixelFormat{ AV_PIX_FMT_NONE }; // 硬件解码帧的像素格式，仅在isHardwareDecoded为true时有效，否则为AV_PIX_FMT_NONE
+        AVHWDeviceType hwDeviceType{ AV_HWDEVICE_TYPE_NONE }; // 硬件设备类型，仅在isHardwareDecoded为true时有效
+        AVPixelFormat hwPixelFormat{ AV_PIX_FMT_NONE }; // 硬件的像素格式，仅在isHardwareDecoded为true时有效
+        AVPixelFormat hwFramePixelFormat{ AV_PIX_FMT_NONE }; // 硬件解码帧转到CPU的像素格式，仅在isHardwareDecoded为true时有效，否则为AV_PIX_FMT_NONE
     };
-    // FrameContext中的frameSwitchOptions成员表示上一帧的格式转换选项
-    using VideoFrameSwitchOptionsCallback = std::function<void(VideoFrameSwitchOptions& to, const FrameContext& frameCtx, UserDataType userData)>;
     // FrameContext中的frameSwitchOptions成员表示当前帧的格式转换选项
-    using VideoRenderFunction = std::function<void(const FrameContext& frameContext, UserDataType userData)>;
+    using VideoRenderFunction = std::function<void(const DecodedFrameContext& frameContext, UserDataType userData)>;
+
+    // @param outFilterGraphs 输出参数，返回要启用的滤波图列表
+    // @param frameContext 当前帧的上下文信息，包含了当前帧的各种信息以及上一帧的格式转换选项
+    // @param userData 用户数据
+    // 返回值true表示启用滤波图，false表示不启用
+    using VideoFrameFilterGraphCreator = std::function<bool(std::vector<IFrameFilterGraph*>& outFilterGraphs, const DecodedFrameContext& frameContext, UserDataType userData)>;
 
     // isClockStable 用于判断videoClock是否准确
     // sleepTime < 0 表示可能需要丢帧以追赶时钟
@@ -71,27 +65,27 @@ public:// 这个区域用于定义公共类型
         VideoClockSyncFunction clockSyncFunction{ nullptr };
         VideoRenderFunction renderer{ nullptr };
         UserDataType rendererUserData{ UserDataType{} };
-        VideoFrameSwitchOptionsCallback frameSwitchOptionsCallback{ nullptr };
-        UserDataType frameSwitchOptionsCallbackUserData{ UserDataType{} };
         DecodeType decodeType{ DecodeType::Software };
+        VideoFrameFilterGraphCreator frameFilterGraphCreator{ nullptr };
+        UserDataType frameFilterGraphCreatorUserData{ UserDataType{} };
 
         void mergeFrom(const VideoPlayOptions& other) {
             if (other.streamIndexSelector) this->streamIndexSelector = other.streamIndexSelector;
             if (other.clockSyncFunction) this->clockSyncFunction = other.clockSyncFunction;
             if (other.renderer) this->renderer = other.renderer;
             if (other.rendererUserData.has_value()) this->rendererUserData = other.rendererUserData;
-            if (other.frameSwitchOptionsCallback) this->frameSwitchOptionsCallback = other.frameSwitchOptionsCallback;
-            if (other.frameSwitchOptionsCallbackUserData.has_value()) this->frameSwitchOptionsCallbackUserData = other.frameSwitchOptionsCallbackUserData;
             if (other.decodeType != DecodeType::Unset) this->decodeType = other.decodeType;
+            if (other.frameFilterGraphCreator) this->frameFilterGraphCreator = other.frameFilterGraphCreator;
+            if (other.frameFilterGraphCreatorUserData.has_value()) this->frameFilterGraphCreatorUserData = other.frameFilterGraphCreatorUserData;
         }
     };
 
     class VideoRenderEvent : public IMediaEvent {
-        FrameContext* frameCtx{ nullptr };
+        DecodedFrameContext* frameCtx{ nullptr };
     public:
-        VideoRenderEvent(FrameContext* frameCtx)
+        VideoRenderEvent(DecodedFrameContext* frameCtx)
             : IMediaEvent(MediaEventType::Render, StreamType::STVideo), frameCtx(frameCtx) {}
-        virtual FrameContext* frameContext() const {
+        virtual DecodedFrameContext* frameContext() const {
             return frameCtx;
         }
         virtual UniquePtrD<IMediaEvent> clone() const override {
@@ -120,10 +114,7 @@ private:
         AVPixelFormat hwPixelFormat{ AV_PIX_FMT_NONE };
         // 视频帧滤镜
         StreamType filterGraphStreamType{ STREAM_TYPES };
-        UniquePtrD<FFmpegFrameFilterGraph> frameFilterGraph{ nullptr };
 
-        // 播放速率（倍速）
-        AtomicDouble speed{ 1.0 };
 
         // 时钟
         AtomicDouble videoClock{ 0.0 }; // 单位s
@@ -150,8 +141,6 @@ private:
             hwPixelFormat = AV_PIX_FMT_NONE;
             videoClock.store(0.0);
             realtimeClock = 0.0;
-            if (frameFilterGraph)
-                frameFilterGraph->clearFilters();
             // 清空请求任务队列
             requestQueueHandler = nullptr;
             //requestQueueHandler.reset();
@@ -167,7 +156,7 @@ private:
 
     const std::string loggerName{ "VideoPlayer" };
     DefinePlayerLoggerSinks(loggerSinks, loggerName);
-    Logger logger{ loggerName, loggerSinks };
+    mutable Logger logger{ loggerName, loggerSinks };
 
     // 播放器状态
     Mutex mtxSinglePlayback;
@@ -272,26 +261,6 @@ public:
         }
     }
 
-    virtual void setMute(bool state) override {}
-    // 视频播放器不支持音频播放，因此始终返回true表示静音状态
-    virtual bool getMute() const override { return true; }
-    virtual void setVolume(double volume) override {}
-    // 视频播放器不支持音频播放，因此始终返回0.0表示无音量
-    virtual double getVolume() const override { return 0.0; }
-
-    virtual void setSpeed(double speed) override {
-        playbackStateVariables.speed.store(speed);
-    }
-
-    virtual double getSpeed() const override {
-        return playbackStateVariables.speed.load();
-    }
-    virtual void setEqualizerState(bool enabled) {}
-    virtual bool getEqualizerState() const { return false; }
-    virtual void setEqualizerGains(const std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo>& gains) {}
-    virtual void setEqualizerGain(uint64_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) {}
-    virtual std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo> getEqualizerGains() const { return {}; }
-
 
     // \param streamIndex -1表示使用AV_TIME_BASE计算，否则使用streamIndex指定的流的time_base
     virtual void notifySeek(uint64_t pts, StreamIndexType streamIndex = -1) override {
@@ -379,16 +348,10 @@ public:
     }
 
     void enableHardwareDecoding(bool b) {
-        if (b)
-            this->playbackStateVariables.playOptions.decodeType = DecodeType::Hardware;
-        else
-            this->playbackStateVariables.playOptions.decodeType = DecodeType::Software;
+        this->playbackStateVariables.playOptions.decodeType = (b ? DecodeType::Hardware : DecodeType::Software);
     }
 
-    void setFrameSwitchOptionsCallback(VideoFrameSwitchOptionsCallback callback, UserDataType userData) {
-        this->playbackStateVariables.playOptions.frameSwitchOptionsCallback = callback;
-        this->playbackStateVariables.playOptions.frameSwitchOptionsCallbackUserData = userData;
-    }
+
 
 protected:
     virtual bool event(IMediaEvent* e) override {
@@ -429,6 +392,7 @@ protected:
         }
         return 0;
     }
+
 
 
 private:
@@ -541,18 +505,23 @@ private:
             return static_cast<int>(pixFmt) % 7; // 12, 13, 14, 32映射到 5, 6, 7, 4
         }
     };
-    std::unordered_map<DeprecatedPixelFormat, SupportedPixelFormat, DeprecatedSupportedPixelFormatHashType> mapDeprecatedSupportedPixelFormat{
-        { DeprecatedPixelFormat::YUVJ420P, SupportedPixelFormat::YUV420P },
-        { DeprecatedPixelFormat::YUVJ422P, SupportedPixelFormat::YUV422P },
-        { DeprecatedPixelFormat::YUVJ444P, SupportedPixelFormat::YUV444P },
-        { DeprecatedPixelFormat::YUVJ440P, SupportedPixelFormat::YUV440P },
-    };
-    bool isDeprecatedPixelFormat(AVPixelFormat pixFmt);
+    static std::unordered_map<DeprecatedPixelFormat, SupportedPixelFormat, DeprecatedSupportedPixelFormatHashType> mapDeprecatedSupportedPixelFormat;
+public:
+    static bool isDeprecatedPixelFormat(AVPixelFormat pixFmt);
 
-    AVPixelFormat getSupportedPixelFormat(AVPixelFormat pixFmt, bool& isDeprecated);
+    static AVPixelFormat getSupportedPixelFormat(AVPixelFormat pixFmt, bool& isDeprecated);
 
-    SwsContext* checkAndGetCorrectSwsContext(SizeI srcSize, AVPixelFormat srcFmt, SizeI dstSize, AVPixelFormat dstFmt, SwsFlags flags);
+    static SwsContext* checkAndGetCorrectSwsContext(SizeI srcSize, AVPixelFormat srcFmt, SizeI dstSize, AVPixelFormat dstFmt, SwsFlags flags, Logger* logger = nullptr);
 
+    // 通过targetFrame的width,height,format信息创建swsCtx
+    static SharedPtr<SwsContext> createSwsContext(AVFrame* targetFrame, AVPixelFormat srcPixFmt, SizeI srcSize, Logger* logger = nullptr);
 
+    static bool swsScaleFrame(SwsContext* swsCtx, AVFrame* srcFrame, AVFrame* targetFrame, Logger* logger = nullptr);
+
+    static SizeI getCorrectScaleSize(const SizeI& scaleSize, const SizeI& frameSize);
+
+    static AVPixelFormat getHwFramePixelFormat(AVBufferRef* hwFrameCtx);
+
+    static bool hwToSwFrame(AVFrame* dstFrame, AVFrame* srcFrame, AVPixelFormat hwPixFmt);
 
 };

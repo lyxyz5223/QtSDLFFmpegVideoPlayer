@@ -308,9 +308,7 @@ void MediaDecodeUtils::listAllHardwareDecoders(Logger* logger)
     AVHWDeviceType type = AV_HWDEVICE_TYPE_NONE;
     logger->info("Find hardware decoders:");
     for (uint64_t i = 1; (type/*current type*/ = av_hwdevice_iterate_types(type/*previous type*/)) != AV_HWDEVICE_TYPE_NONE; ++i)
-    {
-        logger->info("\t decoder {}: {}", i, av_hwdevice_get_type_name(type));
-    }
+        logger->info("  decoder {}: {}", i, av_hwdevice_get_type_name(type));
 }
 AVHWDeviceType MediaDecodeUtils::findHardwareDecoder(Logger* logger, const AVCodec* codec, AVHWDeviceType fromType, AVHWDeviceType& hwDeviceType, AVPixelFormat& hwPixelFormat)
 {
@@ -331,7 +329,8 @@ AVHWDeviceType MediaDecodeUtils::findHardwareDecoder(Logger* logger, const AVCod
             {
                 selectedHWPixelFormat = config->pix_fmt;
                 selectedHWDeviceType = type; // 选择第一个可用的硬件解码器类型
-                logger->info("Decoder {} supports device type {} with pixel format {}.", codec->name, av_hwdevice_get_type_name(type), static_cast<std::underlying_type_t<AVPixelFormat>>(selectedHWPixelFormat));
+                auto fmtName = av_get_pix_fmt_name(selectedHWPixelFormat);
+                logger->info("Decoder {} supports device type {} with pixel format {}.", codec->name, av_hwdevice_get_type_name(type), fmtName ? fmtName : std::to_string(static_cast<std::underlying_type_t<AVPixelFormat>>(selectedHWPixelFormat)));
                 found = true;
                 break;
             }
@@ -940,6 +939,14 @@ std::string PlayerTypes::IFrameFilter::getFilterNameByType(FilterType type)
     case IFrameFilter::Audio10BandEqualizerFilter:
     case IFrameFilter::AudioFIREqualizerFilter:
         return "firequalizer";
+    case IFrameFilter::VideoEqualizerFilter:
+        return "eq";
+    case IFrameFilter::VideoHueFilter:
+        return "hue";
+    case IFrameFilter::VideoRGBFrameHueSaturationFilter:
+        return "huesaturation";
+    case IFrameFilter::VideoHwFrameScaleCudaFilter:
+        return "scale_cuda";
     case IFrameFilter::NoneFilter:
     default:
         break;
@@ -969,14 +976,14 @@ bool PlayerTypes::IFFmpegFrameFilter::configureFilterGraph()
 
 bool PlayerTypes::IFFmpegFrameFilter::createSingleFilter(FilterType type, std::string id, std::string args)
 {
-    auto ctx = createFilterContext(filterGraph.get(), type, id, args);
+    auto ctx = createFilterContext(filterGraph.get(), type, id, args, &logger);
     this->filterCtx = ctx;
     return ctx;
 }
 
 bool PlayerTypes::IFFmpegFrameFilter::createSingleFilter(std::string filterName, std::string id, std::string args)
 {
-    auto ctx = createFilterContext(filterGraph.get(), filterName, id, args);
+    auto ctx = createFilterContext(filterGraph.get(), filterName, id, args, &logger);
     this->filterCtx = ctx;
     return ctx;
 }
@@ -989,14 +996,14 @@ bool PlayerTypes::IFFmpegFrameFilter::linkSingleFilter(AVFilterContext* filterCt
     return true;
 }
 
-bool PlayerTypes::IFFmpegFrameFilter::createAndLinkSingleFilter(FilterType type, std::string id, std::string args)
+bool PlayerTypes::IFFmpegFrameFilter::createAndLinkSingleFilter(FilterType type, std::string id, std::string args, Logger* logger)
 {
     if (!inited) return false;
     if (!createSingleFilter(type, id, args)) return false;
     return linkSingleFilter(this->filterCtx);
 }
 
-bool PlayerTypes::IFFmpegFrameFilter::createAndLinkSingleFilter(std::string filterName, std::string id, std::string args)
+bool PlayerTypes::IFFmpegFrameFilter::createAndLinkSingleFilter(std::string filterName, std::string id, std::string args, Logger* logger)
 {
     if (!inited) return false;
     if (!createSingleFilter(filterName, id, args)) return false;
@@ -1013,17 +1020,30 @@ PlayerTypes::SharedPtr<AVFrame> PlayerTypes::IFFmpegFrameFilter::getOutputFrame(
     return getOutputFrame(this->sinkFilterCtx, needMore, flags);
 }
 
-AVFilterContext* PlayerTypes::IFFmpegFrameFilter::createFilterContext(AVFilterGraph* filterGraph, FilterType type, std::string id, std::string args)
+bool PlayerTypes::IFFmpegFrameFilter::setSrcFilterCtxHwFramesCtx(AVBufferRef* hwFramesCtx)
 {
-    std::string name = getFilterNameByType(type);
-    return createFilterContext(filterGraph, name, id, args);
+    return setSrcFilterCtxHwFramesCtx(srcFilterCtx, hwFramesCtx);
+}
+bool PlayerTypes::IFFmpegFrameFilter::unsetSrcFilterCtxHwFramesCtx(AVPixelFormat swPixFmt)
+{
+    return unsetSrcFilterCtxHwFramesCtx(srcFilterCtx, swPixFmt);
 }
 
-AVFilterContext* PlayerTypes::IFFmpegFrameFilter::createFilterContext(AVFilterGraph* filterGraph, std::string filterName, std::string id, std::string args)
+AVFilterContext* PlayerTypes::IFFmpegFrameFilter::createFilterContext(AVFilterGraph* filterGraph, FilterType type, std::string id, std::string args, Logger* logger)
+{
+    std::string name = getFilterNameByType(type);
+    return createFilterContext(filterGraph, name, id, args, logger);
+}
+
+AVFilterContext* PlayerTypes::IFFmpegFrameFilter::createFilterContext(AVFilterGraph* filterGraph, std::string filterName, std::string id, std::string args, Logger* logger)
 {
     const AVFilter* filter = avfilter_get_by_name(filterName.c_str());
     if (!filter)
+    {
+        if (logger)
+            logger->error("Unsupported filter name: {}, current id: {}, args: {}", filterName, id, args);
         return nullptr;
+    }
     // 创建滤镜
     AVFilterContext* outFilterCtx = nullptr;
     if (avfilter_graph_create_filter(&outFilterCtx, filter, id.c_str(), args.c_str(), nullptr, filterGraph) < 0)
@@ -1064,7 +1084,17 @@ bool PlayerTypes::IFFmpegFrameFilter::createSrcSinkFilterCtx(StreamType streamTy
     {
         if (streamIndex < 0)
             return false;
-        const char* pixFmtName = av_get_pix_fmt_name(codecCtx->pix_fmt);
+        const char* pixFmtName = av_get_pix_fmt_name(codecCtx->sw_pix_fmt);
+        
+        AVRational frameRate = codecCtx->framerate;
+        if (frameRate.num == 0)
+        {
+            frameRate = formatCtx->streams[streamIndex]->avg_frame_rate;
+            if (frameRate.num == 0)
+                frameRate = formatCtx->streams[streamIndex]->r_frame_rate;
+        }
+        auto colorSpaceName = av_color_space_name(codecCtx->colorspace);
+        auto colorRangeName = av_color_range_name(codecCtx->color_range);
         AVRational sar = formatCtx->streams[streamIndex]->sample_aspect_ratio;
         if (sar.num <= 0 || sar.den <= 0)
         {
@@ -1079,11 +1109,12 @@ bool PlayerTypes::IFFmpegFrameFilter::createSrcSinkFilterCtx(StreamType streamTy
             }
         }
         bufferSrcFilterArguments = LoggerFormatNS::format(
-            "video_size={}x{}:pix_fmt={}:time_base={}/{}:pixel_aspect={}/{}",
-            codecCtx->width, codecCtx->height, // 1/sample_rate
+            "video_size={}x{}:width={}:height={}:pix_fmt={}:time_base={}/{}:frame_rate={}:colorspace={}:range={}:pixel_aspect={}/{}",
+            codecCtx->width, codecCtx->height, codecCtx->width, codecCtx->height,
             pixFmtName ? pixFmtName : "",
             formatCtx->streams[streamIndex]->time_base.num, formatCtx->streams[streamIndex]->time_base.den,
-            sar.num, sar.den);
+            frameRate.num / static_cast<double>(frameRate.den), colorSpaceName, colorRangeName,
+            sar.num, sar.den/*, codecCtx->hw_frames_ctx*/);
     }
     if (streamType & StreamType::STAudio)
         bufferSrcFilterArguments = LoggerFormatNS::format(
@@ -1094,12 +1125,15 @@ bool PlayerTypes::IFFmpegFrameFilter::createSrcSinkFilterCtx(StreamType streamTy
         return false;
     AVFilterContext* srcFilterCtx = nullptr;
     outSrcFilterCtx = nullptr;
-    if (avfilter_graph_create_filter(&srcFilterCtx, bufferSrc, "in", bufferSrcFilterArguments.c_str(), nullptr, graph) < 0)
+    int rst = avfilter_graph_create_filter(&srcFilterCtx, bufferSrc, "in", bufferSrcFilterArguments.c_str(), nullptr, graph);
+    if (rst < 0)
         return false;
+    //setSrcFilterCtxHwFramesCtx(srcFilterCtx, codecCtx->hw_frames_ctx);
     outSrcFilterCtx = srcFilterCtx;
     AVFilterContext* sinkFilterCtx = nullptr;
     outSinkFilterCtx = nullptr;
-    if (avfilter_graph_create_filter(&sinkFilterCtx, bufferSink, "out", nullptr, nullptr, graph) < 0)
+    rst = avfilter_graph_create_filter(&sinkFilterCtx, bufferSink, "out", nullptr, nullptr, graph);
+    if (rst < 0)
         return false;
     outSinkFilterCtx = sinkFilterCtx;
     return true;
@@ -1126,25 +1160,58 @@ PlayerTypes::SharedPtr<AVFrame> PlayerTypes::IFFmpegFrameFilter::getOutputFrame(
     return output;
 }
 
+bool PlayerTypes::IFFmpegFrameFilter::setSrcFilterCtxHwFramesCtx(AVFilterContext* srcFilterCtx, AVBufferRef* hwFramesCtx)
+{
+    if (hwFramesCtx)
+    {
+        AVHWFramesContext* hwFrameCtx = reinterpret_cast<AVHWFramesContext*>(hwFramesCtx->data);
+        UniquePtr<AVBufferSrcParameters> par{ av_buffersrc_parameters_alloc(), [](auto* p) { av_free(p); } };
+        par->format = hwFrameCtx->format;
+        par->hw_frames_ctx = av_buffer_ref(hwFramesCtx); // 引用解码器的硬件帧上下文
+        if (av_buffersrc_parameters_set(srcFilterCtx, par.get()) < 0)
+            return false;
+        return true;
+    }
+    return false;
+}
+
+bool PlayerTypes::IFFmpegFrameFilter::unsetSrcFilterCtxHwFramesCtx(AVFilterContext* srcFilterCtx, AVPixelFormat swPixFmt)
+{
+    UniquePtr<AVBufferSrcParameters> par{ av_buffersrc_parameters_alloc(), [](auto* p) { av_free(p); } };
+    par->hw_frames_ctx = nullptr; // 取消硬件帧上下文
+    par->format = swPixFmt;
+    if (av_buffersrc_parameters_set(srcFilterCtx, par.get()) < 0)
+        return false;
+    return true;
+}
+
 
 PlayerTypes::SharedPtr<PlayerTypes::IFrameFilter> PlayerTypes::FFmpegFrameFilterGraph::createFilter(IFrameFilter::FilterType filterType, StreamType streamType, AVFormatContext* formatCtx, AVCodecContext* codecCtx, StreamIndexType streamIndex)
 {
     switch (filterType)
     {
-    case PlayerTypes::IFFmpegFrameFilter::None:
+    case IFFmpegFrameFilter::None:
         return std::make_shared<FFmpegFrameNoneFilter>(streamType, formatCtx, codecCtx, streamIndex);
-    case PlayerTypes::IFFmpegFrameFilter::AudioVolumeFilter:
+    case IFFmpegFrameFilter::AudioVolumeFilter:
         return std::make_shared<FFmpegFrameVolumeFilter>(streamType, formatCtx, codecCtx, streamIndex);
-    case PlayerTypes::IFFmpegFrameFilter::AudioSpeedFilter:
+    case IFFmpegFrameFilter::AudioSpeedFilter:
         return std::make_shared<FFmpegFrameAudioSpeedFilter>(streamType, formatCtx, codecCtx, streamIndex);
-    case PlayerTypes::IFFmpegFrameFilter::VideoSpeedFilter:
+    case IFFmpegFrameFilter::VideoSpeedFilter:
         return std::make_shared<FFmpegFrameVideoSpeedFilter>(streamType, formatCtx, codecCtx, streamIndex);
-    case PlayerTypes::IFFmpegFrameFilter::Audio18BandEqualizerFilter:
+    case IFFmpegFrameFilter::Audio18BandEqualizerFilter:
         return std::make_shared<FFmpegFrameAudio18BandEqualizerFilter>(streamType, formatCtx, codecCtx, streamIndex);
-    case PlayerTypes::IFFmpegFrameFilter::AudioFIREqualizerFilter:
+    case IFFmpegFrameFilter::AudioFIREqualizerFilter:
         return std::make_shared<FFmpegFrameAudio10BandEqualizerFilter>(streamType, formatCtx, codecCtx, streamIndex);
-    case PlayerTypes::IFFmpegFrameFilter::Audio10BandEqualizerFilter:
+    case IFFmpegFrameFilter::Audio10BandEqualizerFilter:
         return std::make_shared<FFmpegFrameAudio10BandEqualizerFilter>(streamType, formatCtx, codecCtx, streamIndex);
+    case IFFmpegFrameFilter::VideoEqualizerFilter:
+        return std::make_shared<FFmpegFrameVideoEqualizerFilter>(streamType, formatCtx, codecCtx, streamIndex);
+    case IFFmpegFrameFilter::VideoHueFilter:
+        return std::make_shared<FFmpegFrameVideoHueFilter>(streamType, formatCtx, codecCtx, streamIndex);
+    case IFFmpegFrameFilter::VideoRGBFrameHueSaturationFilter:
+        return std::make_shared<FFmpegRGBFrameVideoHueSaturationFilter>(streamType, formatCtx, codecCtx, streamIndex);
+    case IFFmpegFrameFilter::VideoHwFrameScaleCudaFilter:
+        return std::make_shared<FFmpegHwFrameVideoScaleCudaFilter>(streamType, formatCtx, codecCtx, streamIndex);
     default:
         break;
     }
@@ -1207,6 +1274,10 @@ bool PlayerTypes::FFmpegFrameFilterGraph::linkFilters()
 
 bool PlayerTypes::FFmpegFrameFilterGraph::addFrame(AVFrame* frame, IFrameFilter::FilterSrcFlag srcFlags)
 {
+    if (frame->hw_frames_ctx)
+        IFFmpegFrameFilter::setSrcFilterCtxHwFramesCtx(srcFilterCtx, frame->hw_frames_ctx);
+    else
+        IFFmpegFrameFilter::unsetSrcFilterCtxHwFramesCtx(srcFilterCtx, static_cast<AVPixelFormat>(frame->format));
     // 添加帧到滤镜图
     if (!IFFmpegFrameFilter::addFrameWithFlags(this->srcFilterCtx, frame, srcFlags))
         return false;
@@ -1244,7 +1315,8 @@ bool PlayerTypes::FFmpegFrameFilterGraph::configureFilterGraph()
 {
     if (configured.load())
         return true; // 已经配置过了，不再配置
-    if (!linkFilters()) return false;
+    if (!filterGraph) return false;
+    bool linkSuccess = linkFilters();
     // 配置滤镜图
     if (avfilter_graph_config(filterGraph.get(), nullptr) < 0)
     {
@@ -1252,7 +1324,7 @@ bool PlayerTypes::FFmpegFrameFilterGraph::configureFilterGraph()
         return false;
     }
     configured.store(true);
-    return true;
+    return linkSuccess;
 }
 
 bool PlayerTypes::FFmpegFrameFilterGraph::addFilter(SharedPtr<IFrameFilter> filter)
@@ -1394,7 +1466,7 @@ bool PlayerTypes::IFFmpegFrameBasicFilter::createFilterCtxForGraph(AVFilterGraph
 {
     this->externalFilterGraph = filterGraph;
     this->m_id = uniqueInstanceId;
-    AVFilterContext* ctx = createFilterContext(filterGraph, type(), uniqueInstanceId, getFilterArguments());
+    AVFilterContext* ctx = createFilterContext(filterGraph, type(), uniqueInstanceId, getFilterArguments(), &logger);
     this->filterCtx = ctx;
     return ctx;
 }

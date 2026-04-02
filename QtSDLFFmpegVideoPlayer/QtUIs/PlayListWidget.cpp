@@ -19,6 +19,10 @@ PlayListWidget::PlayListWidget(QWidget* parent)
     // test
     //QFileInfo fileInfo("D:\\Softwares\\Jijidown\\Download\\「鏡音鈴」「Gimme×Gimme」 Sour式鏡音Rin×Sour式初音Miku[PV] - 1.gimme bili(Av84791490,P1).mp4");
     //appendFile(fileInfo.absoluteFilePath());
+#ifdef _DEBUG
+    appendFile("E:\\BilibiliVideoDownloads\\视频 - 【一人之下 _ 张楚岚·生贺手书】之鹿 (2026-04-01_14-15-30)\\(1) 视频 - 【一人之下 _ 张楚岚·生贺手书】之鹿\\音视频 - 【一人之下 _ 张楚岚·生贺手书】之鹿.mp4");
+    appendFile("C:\\Users\\lyxyz5223\\Desktop\\LxMusicDownloads\\之鹿 - 太一.mp3");
+#endif
 }
 
 PlayListWidget::~PlayListWidget()
@@ -205,8 +209,15 @@ void PlayListWidget::sortItems()
 
 QStringList PlayListWidget::selectFiles()
 {
+    const QString supportedVideoFormats = "*.mp4 *.avi *.mkv *.mov *.flv *.wmv";
+    const QString supportedAudioFormats = "*.mp3 *.wav *.flac *.alac *.apc *.aac *.ogg *.wma";
     // 打开文件对话框
-    QFileDialog fileDialog(this, tr("Open Files"), tr(""), tr("Video Files (*.mp4 *.avi *.mkv *.mov *.flv *.wmv);;All Files (*)"));
+    QFileDialog fileDialog(this, tr("Open Files"), tr(""),
+        tr("All Supported Files") + QString(" (%1 %2);;").arg(supportedVideoFormats).arg(supportedAudioFormats)
+        + tr("Video Files") + QString(" (%1);;").arg(supportedVideoFormats)
+        + tr("Audio Files") + QString(" (%1);;").arg(supportedAudioFormats)
+        + tr("All Files") + QString(" (*.*)")
+    );
     fileDialog.setFileMode(QFileDialog::ExistingFiles);
     if (fileDialog.exec() == QFileDialog::DialogCode::Rejected)
         return {};

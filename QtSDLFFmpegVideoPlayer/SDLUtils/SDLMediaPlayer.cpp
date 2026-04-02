@@ -1,3 +1,6 @@
+#include <FrameProcessor.h>
+
+
 #include "SDLMediaPlayer.h"
 #include "SDLApp.h"
 
@@ -11,19 +14,32 @@ void SDLMediaPlayer::setupPlayer()
         }, 0, true/*等待执行结束*/);
 }
 
-void SDLMediaPlayer::renderVideoFrame(const VideoFrameContext& frameCtx, VideoUserDataType userData)
+void SDLMediaPlayer::renderVideoFrame(const VideoDecodedFrameContext& frameCtx, VideoUserDataType userData)
 {
-    if (!currentTexture) // 纹理未创建
+    VideoRenderUserData* ud = std::any_cast<VideoRenderUserData*>(userData);
+    if (!ud->processor)
+        ud->processor = std::make_shared<VideoFrameProcessor>(logger, brightness, contrast, saturation, hue);
+    if (!ud->processor) return;
+    
+    SizeI windowSize;
+    if (SDL_GetWindowSizeInPixels(currentWindow, &windowSize.w, &windowSize.h))
     {
-        logger.error("Failed to render video frame: SDL texture is null or not created.");
-        SDL_Log("无法渲染视频帧，纹理为空或未创建。");
-        return;
+        if (windowSize != prevWindowSizeInPixel || !currentTexture) // 窗口大小变化或者没有创建纹理则创建
+        {
+            prevWindowSizeInPixel = windowSize;
+            SizeI targetSize;
+            calculateTextureSize(targetSize, SizeI{ frameCtx.filteredFrame->width, frameCtx.filteredFrame->height }, windowSize, scalingMode);
+            currentTexture.reset(SDL_CreateTexture(currentRenderer, SDL_PIXELFORMAT_YV12, SDL_TEXTUREACCESS_TARGET, targetSize.width(), targetSize.height()));
+            ud->processor->setProcessedFrameSize(targetSize);
+        }
     }
+    if (!currentTexture) // 纹理创建失败
+        logger.error("Failed to render video frame: SDL texture is not created or failed to be created.");
+
+    auto fltdFrame = ud->processor->process(frameCtx);
+    if (!fltdFrame) return;
     // 在主线程渲染内容
-    SDLApp::runOnMainThread([&](void*) {
-        auto renderFrame = frameCtx.newFormatFrame;
-        if (!renderFrame) // 转换格式失败
-            return;
+    SDLApp::runOnMainThread([&renderFrame=fltdFrame, this](void*) {
         // 更新纹理
         SDL_UpdateYUVTexture(currentTexture.get(), nullptr,
             renderFrame->data[0], renderFrame->linesize[0],
@@ -53,40 +69,40 @@ void SDLMediaPlayer::cleanupPlayer()
         }); // 默认参数：等待执行结束
 }
 
-void SDLMediaPlayer::frameSwitchOptionsCallback(VideoFrameSwitchOptions& to, const VideoFrameContext& frameCtx, VideoUserDataType userData)
-{
-    // 如果上一帧未启用转换选项，则说明要么是第一次转换，要么是关闭了转换选项（在这里只能是第一次转换，因为下文确定开启转换）
-    if (!frameCtx.frameSwitchOptions.enabled)
-        prevWindowSizeInPixel = SizeI{}; // 第一次转换，重置之前的窗口大小缓存
-    to.enabled = true;
-    to.format = AV_PIX_FMT_YUV420P;
-    to.size = frameCtx.frameSwitchOptions.size;
-    SizeI frameSize;
-    if (frameCtx.swRawFrame) // 使用软件解码帧中的宽高
-        frameSize.setSize(frameCtx.swRawFrame->width, frameCtx.swRawFrame->height);
-    else if (frameCtx.codecCtx) // 使用解码器上下文中的宽高
-        frameSize.setSize(frameCtx.codecCtx->width, frameCtx.codecCtx->height);
-    SDLApp::runOnMainThread([&](void*) {
-        SizeI windowSize;
-        if (!SDL_GetWindowSizeInPixels(currentWindow, &windowSize.w, &windowSize.h))
-            return;
-        if (windowSize == prevWindowSizeInPixel) // 窗口大小未变化则不处理
-            return;
-        // 如果成功，保存当前窗口大小用于缩放视频帧
-        to.size = windowSize;
-        prevWindowSizeInPixel = windowSize; // 更新之前的窗口大小
-        calculateTextureSize(to.size, frameSize, windowSize, scalingMode);
-        // 创建SDL纹理
-        currentTexture.reset(SDL_CreateTexture(currentRenderer, SDL_PIXELFORMAT_YV12,
-            SDL_TEXTUREACCESS_STREAMING,
-            to.size.width(), to.size.height()));
-        if (!currentTexture)
-        {
-            logger.error("Failed to create SDL texture: {}", SDL_GetError());
-            SDL_Log("无法创建纹理: %s", SDL_GetError());
-        }
-        }, 0, true/*等待执行结束*/);
-}
+//void SDLMediaPlayer::frameSwitchOptionsCallback(VideoFrameSwitchOptions& to, const VideoDecodedFrameContext& frameCtx, VideoUserDataType userData)
+//{
+//    // 如果上一帧未启用转换选项，则说明要么是第一次转换，要么是关闭了转换选项（在这里只能是第一次转换，因为下文确定开启转换）
+//    if (!frameCtx.frameSwitchOptions.enabled)
+//        prevWindowSizeInPixel = SizeI{}; // 第一次转换，重置之前的窗口大小缓存
+//    to.enabled = true;
+//    to.format = AV_PIX_FMT_YUV420P;
+//    to.size = frameCtx.frameSwitchOptions.size;
+//    SizeI frameSize;
+//    if (frameCtx.swRawFrame) // 使用软件解码帧中的宽高
+//        frameSize.setSize(frameCtx.swRawFrame->width, frameCtx.swRawFrame->height);
+//    else if (frameCtx.codecCtx) // 使用解码器上下文中的宽高
+//        frameSize.setSize(frameCtx.codecCtx->width, frameCtx.codecCtx->height);
+//    SDLApp::runOnMainThread([&](void*) {
+//        SizeI windowSize;
+//        if (!SDL_GetWindowSizeInPixels(currentWindow, &windowSize.w, &windowSize.h))
+//            return;
+//        if (windowSize == prevWindowSizeInPixel) // 窗口大小未变化则不处理
+//            return;
+//        // 如果成功，保存当前窗口大小用于缩放视频帧
+//        to.size = windowSize;
+//        prevWindowSizeInPixel = windowSize; // 更新之前的窗口大小
+//        calculateTextureSize(to.size, frameSize, windowSize, scalingMode);
+//        // 创建SDL纹理
+//        currentTexture.reset(SDL_CreateTexture(currentRenderer, SDL_PIXELFORMAT_YV12,
+//            SDL_TEXTUREACCESS_STREAMING,
+//            to.size.width(), to.size.height()));
+//        if (!currentTexture)
+//        {
+//            logger.error("Failed to create SDL texture: {}", SDL_GetError());
+//            SDL_Log("无法创建纹理: %s", SDL_GetError());
+//        }
+//        }, 0, true/*等待执行结束*/);
+//}
 
 template <typename SizeBaseType>
 SDL_FRect SDLMediaPlayer::calculateTextureRectF(const Size<SizeBaseType>& frameSize, const Size<SizeBaseType>& containerSize, TexturePosition position)
@@ -157,11 +173,109 @@ bool SDLMediaPlayer::play(const std::string& filePath, SDL_WindowID winId, Video
     this->currentTexture.reset();
     setupPlayer();
     MediaPlayer::MediaPlayOptions mediaOptions;
-    mediaOptions.renderer = std::bind(&SDLMediaPlayer::renderVideoFrame, this, std::placeholders::_1, std::placeholders::_2);
-    mediaOptions.rendererUserData = std::any{};
-    mediaOptions.frameSwitchOptionsCallback = std::bind(&SDLMediaPlayer::frameSwitchOptionsCallback, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
-    mediaOptions.frameSwitchOptionsCallbackUserData = std::any{};
     mediaOptions.decodeType = videoDecodeType;
+    mediaOptions.renderer = std::bind(&SDLMediaPlayer::renderVideoFrame, this, std::placeholders::_1, std::placeholders::_2);
+    VideoRenderUserData renderUserData;
+    mediaOptions.rendererUserData = &renderUserData;
+
+    UniquePtrD<FFmpegFrameFilterGraph> videoFilterGraph{ nullptr };
+    SharedPtr<FFmpegHwFrameVideoScaleCudaFilter> scaleCudaFilter{ nullptr };
+    mediaOptions.videoFrameFilterGraphCreator = [
+        &videoFilterGraph, &scaleCudaFilter, this
+    ](std::vector<IFrameFilterGraph*>& outFilterGraphs, const VideoDecodedFrameContext& frameContext, VideoUserDataType userData) -> bool {
+        if (!videoFilterGraph)
+        {
+            auto& streamIndex = frameContext.streamIndex;
+            auto& formatCtx = frameContext.formatCtx;
+            auto& codecCtx = frameContext.codecCtx;
+            videoFilterGraph = std::make_unique<FFmpegFrameFilterGraph>(StreamType::STVideo, formatCtx, codecCtx, streamIndex);
+            //scaleCudaFilter = std::make_shared<FFmpegHwFrameVideoScaleCudaFilter>(StreamType::STVideo, formatCtx, codecCtx, streamIndex, -1, -1, AV_PIX_FMT_NONE, "", true, FFmpegHwFrameVideoScaleCudaFilter::Disable);
+            //videoFilterGraph->addFilter(scaleCudaFilter);
+            videoFilterGraph->configureFilterGraph();
+        }
+        outFilterGraphs.push_back(videoFilterGraph.get());
+        return true;
+    };
+    mediaOptions.videoFrameFilterGraphCreatorUserData = VideoUserDataType{};
+
+    auto audioFilterGraph = UniquePtrD<FFmpegFrameFilterGraph>(nullptr);
+    auto equalizerFilter = SharedPtr<FFmpegFrameAudio10BandEqualizerFilter>(nullptr);
+    auto volumeFilter = SharedPtr<FFmpegFrameVolumeFilter>(nullptr);
+    auto speedFilter = SharedPtr<FFmpegFrameAudioSpeedFilter>(nullptr);
+    auto lastEqualizerEnabledState = false;
+    mediaOptions.audioFrameFilterGraphCreator = [
+        this, &audioFilterGraph, &equalizerFilter, &volumeFilter, &speedFilter, &lastEqualizerEnabledState
+    ](std::vector<IFrameFilterGraph*>& outFilterGraphs, bool& shouldResetSwrContext, const AudioDecodedFrameContext& frameContext, AudioUserDataType userData) -> bool {
+        if (!audioFilterGraph)
+        {
+            auto& streamIndex = frameContext.streamIndex;
+            auto& formatCtx = frameContext.formatCtx;
+            auto& codecCtx = frameContext.codecCtx;
+            audioFilterGraph = std::make_unique<FFmpegFrameFilterGraph>(StreamType::STAudio, formatCtx, codecCtx, streamIndex);
+            equalizerFilter = std::make_shared<FFmpegFrameAudio10BandEqualizerFilter>(StreamType::STAudio, formatCtx, codecCtx, streamIndex);
+            volumeFilter = std::make_shared<FFmpegFrameVolumeFilter>(StreamType::STAudio, formatCtx, codecCtx, streamIndex, volume);
+            speedFilter = std::make_shared<FFmpegFrameAudioSpeedFilter>(StreamType::STAudio, formatCtx, codecCtx, streamIndex, speed);
+            if (lastEqualizerEnabledState)
+                audioFilterGraph->addFilter(equalizerFilter);
+            audioFilterGraph->addFilter(volumeFilter);
+            if (speed != 1.0)
+                audioFilterGraph->addFilter(speedFilter); // 默认1倍速，不需要该滤镜，否则需要添加滤镜
+            audioFilterGraph->configureFilterGraph();
+        }
+        outFilterGraphs.push_back(audioFilterGraph.get());
+
+        double oldSpeed = speedFilter->speed();
+        speedFilter->setSpeed(speed);
+        volumeFilter->setVolume(volume);
+        equalizerFilter->setBandGains(equalizerBandGains);
+        Queue<std::function<void()>> postFilterGraphConfigTasks;
+        if (oldSpeed != speed && oldSpeed == 1.0)
+        {
+            // 从1x倍速改为变速
+            // 重建滤镜图
+            postFilterGraphConfigTasks.push([&] {
+                audioFilterGraph->addFilter(speedFilter);
+                });
+        }
+        else if (oldSpeed != speed && speed == 1.0)
+        {
+            // 1x取消倍速，防止音质受损
+            // 重建滤镜图
+            postFilterGraphConfigTasks.push([&] {
+                audioFilterGraph->removeFilter(speedFilter.get());
+                });
+        }
+        else if (oldSpeed > 2.0 && speed < 2.0)
+        {
+            // 重建滤镜图
+            postFilterGraphConfigTasks.push([&] {}); // 入队一个空的任务，后续判断postFilterGraphConfigTasks是否为空来决定是否重建滤镜图
+        }
+        if (lastEqualizerEnabledState != isEqualizerEnabled)
+        {
+            lastEqualizerEnabledState = isEqualizerEnabled;
+            // 重建滤镜图
+            postFilterGraphConfigTasks.push([&] {
+                if (isEqualizerEnabled)
+                    audioFilterGraph->addFilter(equalizerFilter);
+                else
+                    audioFilterGraph->removeFilter(equalizerFilter.get());
+                });
+        }
+        if (!postFilterGraphConfigTasks.empty())
+        {
+            audioFilterGraph->resetFilterGraph();
+            while (!postFilterGraphConfigTasks.empty())
+            {
+                auto& task = postFilterGraphConfigTasks.front();
+                task();
+                postFilterGraphConfigTasks.pop();
+            }
+            audioFilterGraph->configureFilterGraph();
+        }
+        return true;
+    };
+    mediaOptions.audioFrameFilterGraphCreatorUserData = AudioUserDataType{};
+
     bool r = MediaPlayer::play(filePath, mediaOptions);
     return r;
 }

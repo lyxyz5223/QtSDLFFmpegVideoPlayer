@@ -92,34 +92,34 @@ QtSDLFFmpegVideoPlayer::QtSDLFFmpegVideoPlayer(QWidget* parent)
     optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoBrightnessChange, this, &QtSDLFFmpegVideoPlayer::playerSetBrightness);
     optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoContrastChange, this, &QtSDLFFmpegVideoPlayer::playerSetContrast);
     optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoSaturationChange, this, &QtSDLFFmpegVideoPlayer::playerSetSaturation);
-    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoChromaticityChange, this, &QtSDLFFmpegVideoPlayer::playerSetChromaticity);
-    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoBrightnessReset, this, [&] { playerSetBrightness(0); });
-    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoContrastReset, this, [&] { playerSetContrast(0); });
-    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoSaturationReset, this, [&] { playerSetSaturation(0); });
-    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoChromaticityReset, this, [&] { playerSetChromaticity(0); });
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoHueChange, this, &QtSDLFFmpegVideoPlayer::playerSetHue);
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoBrightnessReset, this, [&] { optionsWidget->setVideoBrightness(0.0f); });
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoContrastReset, this, [&] { optionsWidget->setVideoContrast(1.0f); });
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoSaturationReset, this, [&] { optionsWidget->setVideoSaturation(1.0f); });
+    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::videoHueReset, this, [&] { optionsWidget->setVideoHue(0.0f); });
 
     optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::equalizerEnableStateChange, this, &QtSDLFFmpegVideoPlayer::playerSetEqualizerState);
     optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::equalizerGainChange, this, &QtSDLFFmpegVideoPlayer::playerSetEqualizerGain);
-    optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::equalizerGainsChange, this, &QtSDLFFmpegVideoPlayer::playerSetEqualizerGains);
+    //optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::equalizerGainsChange, this, &QtSDLFFmpegVideoPlayer::playerSetEqualizerGains);
     optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::systemMixerVolumeChange, this, &QtSDLFFmpegVideoPlayer::systemMixerSetVolume);
     optionsWidget->connect(optionsWidget, &PlayerOptionsWidget::systemVolumeChange, this, &QtSDLFFmpegVideoPlayer::systemSetVolume);
 
 
     optionsWidget->setPlaySpeed(mediaPlayer.getSpeed());
-    optionsWidget->setEqualizerEnabled(mediaPlayer.getEqualizerState());
+    optionsWidget->setEqualizerEnabled(mediaPlayer.getEqualizerEnabled());
 
     systemVolumeController.setVolumeChangeCallback([this] (ISystemVolumeController::VolumeDeviceType type, float volume, bool muted) {
         if (type == SystemVolumeController::Master)
         {
-            optionsWidget->setSystemVolumeUI(volume);
+            optionsWidget->setSystemVolume(volume);
         }
         else if (type == SystemVolumeController::Mixer)
         {
-            optionsWidget->setSystemMixerVolumeUI(volume); 
+            optionsWidget->setSystemMixerVolume(volume); 
         }
         });
     auto initVol = systemVolumeController.getSystemMasterVolume();
-    optionsWidget->setSystemVolumeUI(initVol);
+    optionsWidget->setSystemVolume(initVol);
 
     videoPreviewThumbnailWidget = new QLabel(this);
     videoPreviewThumbnailWidget->setWindowFlag(Qt::FramelessWindowHint, true);
@@ -518,11 +518,11 @@ void QtSDLFFmpegVideoPlayer::beforePlaybackCallback(AbstractPlayer::StreamType s
     else
         QMetaObject::invokeMethod(this, updateUI/*, Qt::QueuedConnection*/);
 }
-void QtSDLFFmpegVideoPlayer::videoRenderCallback(const MediaPlayer::VideoFrameContext& frameCtx)
+void QtSDLFFmpegVideoPlayer::videoRenderCallback(const MediaPlayer::VideoDecodedFrameContext& frameCtx)
 {
     if (timeUpdateStream != AbstractPlayer::StreamType::STVideo)
         return;
-    uint64_t currentTime = calcMsFromTimeStamp(frameCtx.swRawFrame->pts + frameCtx.swRawFrame->duration, frameCtx.formatCtx->streams[frameCtx.streamIndex]->time_base);
+    uint64_t currentTime = calcMsFromTimeStamp(frameCtx.rawFrame->pts + frameCtx.rawFrame->duration, frameCtx.formatCtx->streams[frameCtx.streamIndex]->time_base);
     uint64_t curTimeS = currentTime / 1000;
     this->currentTimeMs = currentTime;
     if (this->currentTimeS == curTimeS || isMediaSliderMoving)
@@ -539,7 +539,7 @@ void QtSDLFFmpegVideoPlayer::videoRenderCallback(const MediaPlayer::VideoFrameCo
     else
         QMetaObject::invokeMethod(this, updateUI/*, Qt::QueuedConnection*/);
 }
-void QtSDLFFmpegVideoPlayer::audioRenderCallback(const MediaPlayer::AudioFrameContext& frameCtx)
+void QtSDLFFmpegVideoPlayer::audioRenderCallback(const MediaPlayer::AudioSampleFrameContext& frameCtx)
 {
     if (timeUpdateStream != AbstractPlayer::StreamType::STAudio)
         return;

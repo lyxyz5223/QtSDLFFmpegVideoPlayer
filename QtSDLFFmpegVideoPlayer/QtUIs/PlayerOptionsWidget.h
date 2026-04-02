@@ -24,13 +24,26 @@ public:
         ui.timeEditPlayerABLoopIntervalSideB->setTime(QTime::fromMSecsSinceStartOfDay(milliseconds));
     }
 
-    void setSystemVolumeUI(double volume) {
+    void setSystemVolume(double volume) {
         const QSignalBlocker blocker(ui.verticalSliderSystemVolume); // 暂时阻塞信号
         ui.verticalSliderSystemVolume->setValue(std::clamp(static_cast<int>(volume * 100), 0, 100));
     }
-    void setSystemMixerVolumeUI(double volume) {
+    void setSystemMixerVolume(double volume) {
         const QSignalBlocker blocker(ui.verticalSliderSystemMixerVolume); // 暂时阻塞信号
         ui.verticalSliderSystemMixerVolume->setValue(std::clamp(static_cast<int>(volume * 100), 0, 100));
+    }
+
+    void setVideoBrightness(float brightness) {
+        ui.horizontalSliderVideoBrightness->setValue(std::clamp(static_cast<int>(brightness * 100), -1000, 1000));
+    }
+    void setVideoContrast(float contrast) {
+        ui.horizontalSliderVideoContrast->setValue(std::clamp(static_cast<int>(contrast * 100), -1000, 1000));
+    }
+    void setVideoSaturation(float saturation) {
+        ui.horizontalSliderVideoSaturation->setValue(std::clamp(static_cast<int>(saturation * 100), -1000, 1000));
+    }
+    void setVideoHue(float hue) {
+        ui.horizontalSliderVideoHue->setValue(std::clamp(static_cast<int>(hue * 100), -18000, 18000));
     }
 
 signals:
@@ -46,19 +59,19 @@ signals:
     void playerABLoopIntervalRemove();
 
     // Video options signals
-    void videoBrightnessChange(int value);
-    void videoContrastChange(int value);
-    void videoSaturationChange(int value);
-    void videoChromaticityChange(int value);
+    void videoBrightnessChange(float value); // -10.0 to 10.0
+    void videoContrastChange(float value); // -10.0 to 10.0
+    void videoSaturationChange(float value); // -10.0 to 10.0
+    void videoHueChange(float value); // degrees, -180.0 to 180.0
     void videoBrightnessReset();
     void videoContrastReset();
     void videoSaturationReset();
-    void videoChromaticityReset();
+    void videoHueReset();
 
     // Audio options signals
     void equalizerEnableStateChange(bool enable);
     void equalizerGainChange(uint64_t bandIndex, double gain);
-    void equalizerGainsChange(const std::vector<double>& gains);
+    //void equalizerGainsChange(const std::vector<double>& gains);
     void systemMixerVolumeChange(int volume);
     void systemVolumeChange(int volume);
 
@@ -76,14 +89,14 @@ protected slots:
     void playOptionPlayerABLoopIntervalSideBSet();
     void playOptionPlayerABLoopIntervalRemove();
 
-    void videoOptionVideoBrightnessChange(int value) { emit videoBrightnessChange(value); }
-    void videoOptionVideoContrastChange(int value) { emit videoContrastChange(value); }
-    void videoOptionVideoSaturationChange(int value) { emit videoSaturationChange(value); }
-    void videoOptionVideoChromaticityChange(int value) { emit videoChromaticityChange(value); }
-    void videoOptionVideoBrightnessReset();
-    void videoOptionVideoContrastReset();
-    void videoOptionVideoSaturationReset();
-    void videoOptionVideoChromaticityReset();
+    void videoOptionVideoBrightnessChange(int value) { emit videoBrightnessChange(value / 100.0f); }
+    void videoOptionVideoContrastChange(int value) { emit videoContrastChange(value / 100.0f); }
+    void videoOptionVideoSaturationChange(int value) { emit videoSaturationChange(value / 100.0f); }
+    void videoOptionVideoHueChange(int value) { emit videoHueChange(value / 100.0f); }
+    void videoOptionVideoBrightnessReset() { emit videoBrightnessReset(); }
+    void videoOptionVideoContrastReset() { emit videoContrastReset(); }
+    void videoOptionVideoSaturationReset() { emit videoSaturationReset(); }
+    void videoOptionVideoHueReset() { emit videoHueReset(); }
 
     void audioOptionEqualizerStateChange(Qt::CheckState state) { emit equalizerEnableStateChange(state == Qt::CheckState::Checked); }
     void audioOptionEqualizerValueChange(uint64_t bandIndex, int value) { emit equalizerGainChange(bandIndex, value / 100.0); }

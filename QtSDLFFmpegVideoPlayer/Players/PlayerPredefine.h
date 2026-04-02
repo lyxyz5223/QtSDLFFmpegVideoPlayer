@@ -393,6 +393,10 @@ public:
             Audio18BandEqualizerFilter,
             AudioFIREqualizerFilter,
             Audio10BandEqualizerFilter,
+            VideoEqualizerFilter,
+            VideoHueFilter,
+            VideoRGBFrameHueSaturationFilter,
+            VideoHwFrameScaleCudaFilter,
         };
         // 根据FilterType获取滤镜名称
         static std::string getFilterNameByType(FilterType type);
@@ -460,6 +464,7 @@ public:
         AVFilterContext* srcFilterCtx{ nullptr }; // 内存交由滤镜图管理
         AVFilterContext* sinkFilterCtx{ nullptr }; // 内存交由滤镜图管理
         AVFilterContext* filterCtx{ nullptr }; // 滤镜上下文
+        Logger logger{ "IFFmpegFrameFilter" };
         // 创建源和接收滤镜以及滤镜图，并设置相关参数
         void createSrcSinkFilterCtx(AVFilterGraph* graph) { inited = initializeSrcSinkFilterCtx(graph); }
         // 判断源和接收滤镜和滤镜图是否已初始化
@@ -469,16 +474,20 @@ public:
         bool createSingleFilter(std::string filterName, std::string id, std::string args);
         bool linkSingleFilter(AVFilterContext* filterCtx); // 链接中间滤镜到源和接收滤镜之间
         // 创建单个滤镜、源滤镜和接收滤镜并链接，如果使用IFrameFilterGraph则不需要调用此函数
-        bool createAndLinkSingleFilter(FilterType type, std::string id, std::string args);
-        bool createAndLinkSingleFilter(std::string filterName, std::string id, std::string args);
+        bool createAndLinkSingleFilter(FilterType type, std::string id, std::string args, Logger* logger);
+        bool createAndLinkSingleFilter(std::string filterName, std::string id, std::string args, Logger* logger);
         bool addFrameWithFlags(AVFrame* frame, FilterSrcFlag flags = SrcFlagNone); // 将frame添加到滤镜图中
         SharedPtr<AVFrame> getOutputFrame(bool& needMore, FilterSinkFlag flags = SinkFlagNone); // 从滤镜图中获取输出frame
+        bool setSrcFilterCtxHwFramesCtx(AVBufferRef* hwFramesCtx);
+        bool unsetSrcFilterCtxHwFramesCtx(AVPixelFormat swPixFmt);
     public:
-        static AVFilterContext* createFilterContext(AVFilterGraph* filterGraph, FilterType type, std::string id, std::string args);
-        static AVFilterContext* createFilterContext(AVFilterGraph* filterGraph, std::string filterName, std::string id, std::string args);
+        static AVFilterContext* createFilterContext(AVFilterGraph* filterGraph, FilterType type, std::string id, std::string args, Logger* logger);
+        static AVFilterContext* createFilterContext(AVFilterGraph* filterGraph, std::string filterName, std::string id, std::string args, Logger* logger);
         static bool createSrcSinkFilterCtx(StreamType streamType, AVFilterGraph* graph, AVCodecContext* codecCtx, AVFormatContext* formatCtx, StreamIndexType streamIndex, AVFilterContext*& outSrcFilterCtx, AVFilterContext*& outSinkFilterCtx);
         static bool addFrameWithFlags(AVFilterContext* srcFilterCtx, AVFrame* frame, FilterSrcFlag flags = SrcFlagNone); // 将frame添加到滤镜图中
         static SharedPtr<AVFrame> getOutputFrame(AVFilterContext* sinkFilterCtx, bool& needMore, FilterSinkFlag flags = SinkFlagNone); // 从滤镜图中获取输出frame
+        static bool setSrcFilterCtxHwFramesCtx(AVFilterContext* srcFilterCtx, AVBufferRef* hwFramesCtx);
+        static bool unsetSrcFilterCtxHwFramesCtx(AVFilterContext* srcFilterCtx, AVPixelFormat swPixFmt);
     };
     // 滤镜图操作接口
     struct IFrameFilterGraphFilterListOps {
@@ -902,6 +911,217 @@ public:
         }
     };
 
+    /**
+     * @param contrast  对比度，默认1，范围[-1000.0, 1000.0]，负值降低对比度，正值增加对比度
+     * @param brightness 亮度，默认0.0，范围[-1.0, 1.0]，负值降低亮度，正值增加亮度
+     * @param saturation 饱和度，默认1.0，范围[0.0, 3.0]，0.0为完全去色，3.0为极度饱和
+     * @param gamma 伽马值，默认1.0，范围[0.1, 10.0]
+     * @param gammaR 伽马红色分量，默认1.0，范围[0.1, 10.0]
+     * @param gammaG 伽马绿色分量，默认1.0，范围[0.1, 10.0]
+     * @param gammaB 伽马蓝色分量，默认1.0，范围[0.1, 10.0]
+     * @param gammaWeight 伽马权重，默认0.0，范围[0.0, 1.0]，0.0表示使用全局gamma值，1.0表示完全使用分量gamma值
+     * @unused param eval 评估模式，可选参数：init, frame，默认init，init表示仅在滤镜初始化时评估一次参数，frame表示每帧都评估参数
+     */
+    class FFmpegFrameVideoEqualizerFilter : public IFFmpegFrameBasicFilter {
+        float contrast{ 1.0f };
+        float brightness{ 0.0f };
+        float saturation{ 1.0f };
+        float gamma{ 1.0f };
+        float gammaR{ 1.0f };
+        float gammaG{ 1.0f };
+        float gammaB{ 1.0f };
+        float gammaWeight{ 1.0f };
+        constexpr static const char* paramContrast = "contrast";
+        constexpr static const char* paramBrightness = "brightness";
+        constexpr static const char* paramSaturation = "saturation";
+        constexpr static const char* paramGamma = "gamma";
+        constexpr static const char* paramGammaR = "gamma_r";
+        constexpr static const char* paramGammaG = "gamma_g";
+        constexpr static const char* paramGammaB = "gamma_b";
+        constexpr static const char* paramGammaWeight = "gamma_weight";
+    public:
+        FFmpegFrameVideoEqualizerFilter(StreamType streamType, AVFormatContext* fmtCtx, AVCodecContext* codecCtx, StreamIndexType streamIndex, 
+            float contrast = 1.0f, float brightness = 0.0f, float saturation = 1.0f,
+            float gamma = 1.0f, float gammaR = 1.0f, float gammaG = 1.0f, float gammaB = 1.0f, float gammaWeight = 1.0f)
+            : IFFmpegFrameBasicFilter(streamType, fmtCtx, codecCtx, streamIndex),
+            contrast(contrast), brightness(brightness), saturation(saturation),
+            gamma(gamma), gammaR(gammaR), gammaG(gammaG), gammaB(gammaB), gammaWeight(gammaWeight) {
+        }
+        FFmpegFrameVideoEqualizerFilter(const FFmpegFrameVideoEqualizerFilter& other, float contrast, float brightness, float saturation,
+            float gamma, float gammaR, float gammaG, float gammaB, float gammaWeight)
+            : IFFmpegFrameBasicFilter(other.streamType, other.formatCtx, other.codecCtx, other.streamIndex),
+            contrast(contrast), brightness(brightness), saturation(saturation),
+            gamma(gamma), gammaR(gammaR), gammaG(gammaG), gammaB(gammaB), gammaWeight(gammaWeight) {
+        }
+        virtual SharedPtr<IFrameFilter> clone() const override {
+            return std::make_shared<FFmpegFrameVideoEqualizerFilter>(*this, contrast, brightness, saturation, gamma, gammaR, gammaG, gammaB, gammaWeight);
+        }
+        virtual FilterType type() const override {
+            return FilterType::VideoEqualizerFilter;
+        }
+        virtual std::string getFilterArguments() const {
+            return LoggerFormatNS::format("{}={}:{}={}:{}={}:{}={}:{}={}:{}={}:{}={}:{}={}",
+                paramContrast, contrast, paramBrightness, brightness, paramSaturation, saturation, 
+                paramGamma, gamma, paramGammaR, gammaR, paramGammaG, gammaG, paramGammaB, gammaB, paramGammaWeight, gammaWeight);
+        }
+    };
+
+    // @param h hue angle in degrees/radians, default 0
+    // @param s saturation, default 1.0, range [-10.0, 10.0]
+    // @param hueInRadians hue angle in radians or degrees, default false (degrees)
+    // @param b brightness, default 0.0, range [-10.0, 10.0]
+    class FFmpegFrameVideoHueFilter : public IFFmpegFrameBasicFilter {
+        float h{ 0.0f };
+        bool hueInRadians{ false };
+        float s{ 1.0f };
+        float b{ 0.0f };
+        constexpr static const char* paramh = "h";
+        constexpr static const char* paramH = "H";
+        constexpr static const char* params = "s";
+        constexpr static const char* paramb = "b";
+    public:
+
+        FFmpegFrameVideoHueFilter(StreamType streamType, AVFormatContext* fmtCtx, AVCodecContext* codecCtx, StreamIndexType streamIndex,
+            float h = 0.0f, bool hueInRadians = false, float s = 1.0f, float b = 0.0f)
+            : IFFmpegFrameBasicFilter(streamType, fmtCtx, codecCtx, streamIndex), h(h), s(s), hueInRadians(hueInRadians), b(b) {}
+        FFmpegFrameVideoHueFilter(const FFmpegFrameVideoHueFilter& other, float h, bool hueInRadians, float s, float b)
+            : IFFmpegFrameBasicFilter(other.streamType, other.formatCtx, other.codecCtx, other.streamIndex), h(h), hueInRadians(hueInRadians), s(s), b(b) {
+        }
+        virtual SharedPtr<IFrameFilter> clone() const override {
+            return std::make_shared<FFmpegFrameVideoHueFilter>(*this, h, hueInRadians, s, b);
+        }
+        virtual FilterType type() const override {
+            return FilterType::VideoHueFilter;
+        }
+        virtual std::string getFilterArguments() const {
+            return LoggerFormatNS::format("{}={}:{}={}:{}={}", hueInRadians ? paramH : paramh, h, params, s, paramb, b);
+        }
+        virtual bool setHue(float hue) {
+            h = hue;
+            return setOption(paramh, std::to_string(hue));
+        }
+        virtual bool setSaturation(float saturation) {
+            s = saturation;
+            return setOption(params, std::to_string(saturation));
+        }
+        virtual bool setBrightness(float brightness) {
+            b = brightness;
+            return setOption(paramb, std::to_string(brightness));
+        }
+    };
+
+    // 对应ffmpeg的滤镜：huesaturation
+    // 只能用于RGB帧
+    class FFmpegRGBFrameVideoHueSaturationFilter : public IFFmpegFrameBasicFilter {
+        float hue{ 0.0f };
+        float saturation{ 1.0f };
+        //float intensity{ 0.0f };
+        //char colors{ 'a' };
+        //float strength{ 1.0f };
+        //float lightness{ 0.0f };
+        constexpr static const char* paramHue = "hue";
+        constexpr static const char* paramSaturation = "saturation";
+    public:
+
+        FFmpegRGBFrameVideoHueSaturationFilter(StreamType streamType, AVFormatContext* fmtCtx, AVCodecContext* codecCtx, StreamIndexType streamIndex,
+            float saturation = 1.0f, float hue = 0.0f)
+            : IFFmpegFrameBasicFilter(streamType, fmtCtx, codecCtx, streamIndex), saturation(saturation), hue(hue) {}
+        FFmpegRGBFrameVideoHueSaturationFilter(const FFmpegRGBFrameVideoHueSaturationFilter& other, float saturation = 1.0f, float hue = 0.0f)
+            : IFFmpegFrameBasicFilter(other.streamType, other.formatCtx, other.codecCtx, other.streamIndex), saturation(saturation), hue(hue) {
+        }
+        virtual SharedPtr<IFrameFilter> clone() const override {
+            return std::make_shared<FFmpegRGBFrameVideoHueSaturationFilter>(*this, this->saturation, this->hue);
+        }
+        virtual FilterType type() const override {
+            return FilterType::VideoRGBFrameHueSaturationFilter;
+        }
+        virtual std::string getFilterArguments() const {
+            return LoggerFormatNS::format("{}={}:{}={}", paramHue, hue, paramSaturation, saturation);
+        }
+    };
+
+    // @param w output width
+    // @param h output height
+    // @param format Controls the output pixel format. By default, or if none is specified, the input pixel format is used.
+    //                  The filter does not support converting between YUV and RGB pixel formats.
+    // @param interpAlgorithm Sets the algorithm used for scaling:
+    //                          nearest: Nearest neighbour. Used by default if input parameters match the desired output.
+    //                          bilinear: Bilinear.
+    //                          bicubic: Bicubic. This is the default.
+    //                          lanczos: Lanczos.
+    // @param passthrough If set to 0, every frame is processed, even if no conversion is necessary.This mode can be useful to use the filter as a buffer for a downstream frame - consumer that exhausts the limited decoder frame pool.
+    //                      If set to 1, frames are passed through as - is if they match the desired output parameters.This is the default behaviour.
+    // @param param Algorithm-Specific parameter. Affects the curves of the bicubic algorithm.
+    // @param force_original_aspect_ratio ‘disable’: Scale the video as specified and disable this feature.
+    //                                      ‘decrease’: The output video dimensions will automatically be decreased if needed.
+    //                                      ‘increase’: The output video dimensions will automatically be increased if needed.
+    class FFmpegHwFrameVideoScaleCudaFilter : public IFFmpegFrameBasicFilter {
+    public:
+        enum ForceOriginalAspectRatioOption {
+            Disable = 0, Decrease, Increase
+        };
+    private:
+        int w{ -1 }; // output width
+        int h{ -1 }; // output height
+        AVPixelFormat format{ AV_PIX_FMT_NONE }; // output format
+        std::string interpAlgorithm{ "" }; // algorithm used for scaling
+        bool passthrough{ true };
+        ForceOriginalAspectRatioOption forceOriginalAspectRatio{ Disable };
+        constexpr static const char* paramw = "w";
+        constexpr static const char* paramh = "h";
+        constexpr static const char* paramformat = "format";
+        constexpr static const char* parampassthrough = "passthrough";
+        constexpr static const char* paraminterpAlgo = "interp_algo";
+        constexpr static const char* paramforceOriginalAspectRatio = "force_original_aspect_ratio";
+    public:
+        FFmpegHwFrameVideoScaleCudaFilter(StreamType streamType, AVFormatContext* fmtCtx, AVCodecContext* codecCtx, StreamIndexType streamIndex,
+            int width = -1, int height = -1, AVPixelFormat format = AV_PIX_FMT_NONE, const std::string& interpAlgorithm = "", bool passthrough = true,
+            ForceOriginalAspectRatioOption forceOriginalAspectRatio = Disable)
+            : IFFmpegFrameBasicFilter(streamType, fmtCtx, codecCtx, streamIndex), w(width), h(height),
+            format(format), interpAlgorithm(interpAlgorithm), passthrough(passthrough), forceOriginalAspectRatio(forceOriginalAspectRatio) {
+        }
+        FFmpegHwFrameVideoScaleCudaFilter(const FFmpegHwFrameVideoScaleCudaFilter& other)
+            : IFFmpegFrameBasicFilter(other.streamType, other.formatCtx, other.codecCtx, other.streamIndex), w(other.w), h(other.h),
+            format(other.format), interpAlgorithm(other.interpAlgorithm), passthrough(other.passthrough), forceOriginalAspectRatio(other.forceOriginalAspectRatio) {
+        }
+        virtual SharedPtr<IFrameFilter> clone() const override {
+            return std::make_shared<FFmpegHwFrameVideoScaleCudaFilter>(*this);
+        }
+        virtual FilterType type() const override {
+            return FilterType::VideoHwFrameScaleCudaFilter;
+        }
+        virtual std::string getFilterArguments() const {
+            std::string rst;
+            if (w >= 0)
+                rst += LoggerFormatNS::format("{}={}:", paramw, w);
+            if (h >= 0)
+                rst += LoggerFormatNS::format("{}={}:", paramh, h);
+            if (format != AV_PIX_FMT_NONE)
+            {
+                auto fmtName = av_get_pix_fmt_name(format);
+                rst += LoggerFormatNS::format("{}={}:", paramformat, fmtName ? fmtName : "none");
+            }
+            if (interpAlgorithm.size())
+                rst += LoggerFormatNS::format("{}={}:", paraminterpAlgo, interpAlgorithm);
+            rst += LoggerFormatNS::format("{}={}:{}={}", parampassthrough, (passthrough ? 1 : 0), paramforceOriginalAspectRatio, getForceOriginalAspectRatioOptionName(forceOriginalAspectRatio));
+            return rst;
+        }
+        static const std::string getForceOriginalAspectRatioOptionName(ForceOriginalAspectRatioOption o) {
+            switch (o)
+            {
+            case Decrease:
+                return "decrease";
+            case Increase:
+                return "increase";
+            default:
+            case Disable:
+                return "disable";
+            }
+        }
+    };
+
+
+
     class MediaEventType {
     public:
         enum IMediaEvent : int {
@@ -969,7 +1189,6 @@ public:
         //    return std::make_unique<IMediaEvent>(*this);
         //}
     };
-
 
     class MediaPlaybackStateChangeEvent : public IMediaEvent {
     private:
@@ -1042,38 +1261,53 @@ public:
         }
 
     };
-    // 滤镜事件(Unfinished)
-    class MediaFrameFilterGraphEvent : public IMediaEvent {
-    public:
-        using FilterType = IFrameFilter::FilterType;
-        enum FilterActionType {
-            None = 0,
-            AddFilter,
-            RemoveFilter,
-            ReplaceFilter,
-            InsertFilterAfter,
-        };
-        enum ActionState {
-            BeforeAction = 0,
-            AfterAction,
-        };
-    protected:
-        FilterType m_filterType{ FilterType::NoneFilter };
-        FilterActionType m_action{ None };
-        ActionState m_actionState{ BeforeAction };
-    public:
-        MediaFrameFilterGraphEvent(StreamType st, FilterType filterType, FilterActionType action, ActionState as)
-            : IMediaEvent(MediaEventType::Filter, st), m_filterType(filterType), m_action(action), m_actionState(as) {}
-        MediaFrameFilterGraphEvent(ActionState newState, const MediaFrameFilterGraphEvent& toClone)
-            : IMediaEvent(toClone.eventType, toClone.stream), m_filterType(toClone.m_filterType), m_action(toClone.m_action), m_actionState(newState) {}
-        virtual ~MediaFrameFilterGraphEvent() = default;
-        virtual UniquePtrD<IMediaEvent> clone() const override { return std::make_unique<MediaFrameFilterGraphEvent>(*this); }
-        virtual FilterType filterType() const { return m_filterType; }
-        virtual FilterActionType action() const { return m_action; }
-        virtual ActionState actionState() const { return m_actionState; }
-        virtual UniquePtrD<MediaFrameFilterGraphEvent> clone(ActionState newActionState) const { return std::make_unique<MediaFrameFilterGraphEvent>(newActionState, *this); }
-         
-    };
+    
+    //// 滤镜图事件(Unfinished)
+    //class MediaFrameFilterGraphEvent : public IMediaEvent {
+    //public:
+    //    using FilterType = IFrameFilter::FilterType;
+    //    enum FilterActionType {
+    //        None = 0,
+    //        AddFilter,
+    //        RemoveFilter,
+    //        ReplaceFilter,
+    //        InsertFilterAfter,
+    //    };
+    //    enum ActionState {
+    //        BeforeAction = 0,
+    //        AfterAction,
+    //    };
+    //protected:
+    //    FilterType m_filterType{ FilterType::NoneFilter };
+    //    FilterActionType m_action{ None };
+    //    ActionState m_actionState{ BeforeAction };
+    //public:
+    //    MediaFrameFilterGraphEvent(StreamType st, FilterType filterType, FilterActionType action, ActionState as)
+    //        : IMediaEvent(MediaEventType::FilterGraph, st), m_filterType(filterType), m_action(action), m_actionState(as) {}
+    //    MediaFrameFilterGraphEvent(ActionState newState, const MediaFrameFilterGraphEvent& toClone)
+    //        : IMediaEvent(toClone.eventType, toClone.stream), m_filterType(toClone.m_filterType), m_action(toClone.m_action), m_actionState(newState) {}
+    //    virtual ~MediaFrameFilterGraphEvent() = default;
+    //    virtual UniquePtrD<IMediaEvent> clone() const override { return std::make_unique<MediaFrameFilterGraphEvent>(*this); }
+    //    virtual FilterType filterType() const { return m_filterType; }
+    //    virtual FilterActionType action() const { return m_action; }
+    //    virtual ActionState actionState() const { return m_actionState; }
+    //    virtual UniquePtrD<MediaFrameFilterGraphEvent> clone(ActionState newActionState) const { return std::make_unique<MediaFrameFilterGraphEvent>(newActionState, *this); }
+    //     
+    //};
+    //// 视频滤镜事件
+    //class MediaFrameFilterEvent : public IMediaEvent {
+    //protected:
+    //    AVFormatContext* formatCtx{ nullptr };
+    //    AVCodecContext* codecCtx{ nullptr };
+    //    StreamIndexType streamIndex{ -1 };
+    //public:
+    //    MediaFrameFilterEvent(StreamType streamType, AVFormatContext* formatCtx, AVCodecContext* codecCtx, StreamIndexType streamIndex)
+    //        : IMediaEvent(MediaEventType::Filter, streamType), formatCtx(formatCtx), codecCtx(codecCtx), streamIndex(streamIndex) {
+    //    }
+    //    virtual ~MediaFrameFilterEvent() = default;
+    //    virtual UniquePtrD<IMediaEvent> clone() const override { return std::make_unique<MediaFrameFilterEvent>(*this); }
+    //};
+
 
     // 用于处理一些请求任务
     struct RequestTaskItem;
@@ -1725,18 +1959,18 @@ public:
     virtual void pause() = 0;
     virtual void notifyStop() = 0;
     virtual void stop() = 0;
-    virtual void setMute(bool state) = 0;
-    virtual bool getMute() const = 0;
-    // volume range: [0.0, 1.0]
-    virtual void setVolume(double volume) = 0;
-    virtual double getVolume() const = 0;
-    virtual void setSpeed(double speed) = 0;
-    virtual double getSpeed() const = 0;
-    virtual void setEqualizerState(bool enabled) = 0;
-    virtual bool getEqualizerState() const = 0;
-    virtual void setEqualizerGains(const std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo>& gains) = 0;
-    virtual void setEqualizerGain(uint64_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) = 0;
-    virtual std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo> getEqualizerGains() const = 0;
+    //virtual void setMute(bool state) = 0;
+    //virtual bool getMute() const = 0;
+    //// volume range: [0.0, 1.0]
+    //virtual void setVolume(double volume) = 0;
+    //virtual double getVolume() const = 0;
+    //virtual void setSpeed(double speed) = 0;
+    //virtual double getSpeed() const = 0;
+    //virtual void setEqualizerState(bool enabled) = 0;
+    //virtual bool getEqualizerState() const = 0;
+    //virtual void setEqualizerGains(const std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo>& gains) = 0;
+    //virtual void setEqualizerGain(uint64_t bandIndex, IFFmpegFrameAudioEqualizerFilter::BandInfo gain) = 0;
+    //virtual std::vector<IFFmpegFrameAudioEqualizerFilter::BandInfo> getEqualizerGains() const = 0;
 
     virtual void notifySeek(uint64_t pts, StreamIndexType streamIndex = -1) = 0;
     virtual void seek(uint64_t pts, StreamIndexType streamIndex = -1) = 0;
@@ -1794,6 +2028,5 @@ protected:
     virtual void seekEvent(MediaSeekEvent* e) {}
     // 滤镜事件
     //virtual void frameFilterEvent(MediaFrameFilterEvent* e) {}
-
 };
 
